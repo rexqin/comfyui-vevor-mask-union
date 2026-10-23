@@ -1,6 +1,15 @@
-[project]
+﻿[project]
 name = "vevor-mask-union"
-version = "0.1.0"
-description = "ComfyUI node: union a MASK batch (one frame per region) into a single mask"
-requires-python = ">=3.9"
+version = "0.2.9"
+description = "ComfyUI nodes for Vevor listing images: union a MASK batch, render translated text into OCR boxes with a real font, square-pad without cropping, and score a rendered locale against the source with a vision model"
 license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/rexqin/comfyui-vevor-mask-union"
+
+[tool.comfy]
+PublisherId = "rexqin"
+DisplayName = "Vevor Mask Union"
+Icon = ""
