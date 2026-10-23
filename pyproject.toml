@@ -1,0 +1,6 @@
+[project]
+name = "vevor-mask-union"
+version = "0.1.0"
+description = "ComfyUI node: union a MASK batch (one frame per region) into a single mask"
+requires-python = ">=3.9"
+license = { text = "MIT" }
