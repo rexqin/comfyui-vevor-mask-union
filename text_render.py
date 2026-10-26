@@ -588,6 +588,90 @@ class VevorTextRender:
         return (torch.from_numpy(out).unsqueeze(0), json.dumps(report, ensure_ascii=False, indent=1))
 
 
+def letterbox_to_target(array, target_w, target_h, fill_mode, fill_color):
+    """Fit inside target_w×target_h, centre, return (rgb float32, margin mask float32).
+
+    The margin mask is 1.0 on synthetic border pixels (candidates for diffusion
+    outpaint) and 0.0 on the scaled original content.
+    """
+    src = Image.fromarray(array).convert("RGB")
+    if src.width <= 0 or src.height <= 0:
+        raise ValueError("letterbox_to_target: empty image")
+
+    scale = min(target_w / src.width, target_h / src.height)
+    new_w = max(1, int(round(src.width * scale)))
+    new_h = max(1, int(round(src.height * scale)))
+    scaled = src.resize((new_w, new_h), Image.LANCZOS)
+    left = (target_w - new_w) // 2
+    top = (target_h - new_h) // 2
+
+    margin_mask = np.ones((target_h, target_w), dtype=np.float32)
+    margin_mask[top : top + new_h, left : left + new_w] = 0.0
+
+    if fill_mode == "solid":
+        canvas = Image.new("RGB", (target_w, target_h), _parse_color(fill_color, (255, 255, 255)))
+        canvas.paste(scaled, (left, top))
+    else:
+        data = np.asarray(scaled)
+        padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+        padded[top : top + new_h, left : left + new_w] = data
+        if left:
+            padded[top : top + new_h, :left] = data[:, :1]
+        if target_w - new_w - left:
+            padded[top : top + new_h, left + new_w :] = data[:, -1:]
+        if top:
+            padded[:top, :] = padded[top : top + 1, :]
+        if target_h - new_h - top:
+            padded[top + new_h :, :] = padded[top + new_h - 1 : top + new_h, :]
+        canvas = Image.fromarray(padded)
+
+    rgb = np.asarray(canvas).astype(np.float32) / 255.0
+    return rgb, margin_mask
+
+
+class VevorLetterboxToTarget:
+    """Letterbox upscaled art to a target resolution and expose a margin mask.
+
+    Downstream diffusion (Qwen Image Edit) should fill mask==1 areas only, via
+    ``ImageCompositeMasked``, so the product pixels stay untouched.
+    """
+
+    DESCRIPTION = (
+        "Scale to fit inside target_w×target_h, centre on canvas, output margin "
+        "mask for outpaint. Does not run diffusion itself."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "target_w": ("INT", {"default": 2560, "min": 64, "max": 8192, "step": 8}),
+                "target_h": ("INT", {"default": 2560, "min": 64, "max": 8192, "step": 8}),
+                "fill_mode": (["edge_extend", "solid"], {"default": "edge_extend"}),
+                "fill_color": ("STRING", {"default": "#ffffff"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_NAMES = ("image", "margin_mask")
+    FUNCTION = "letterbox"
+    CATEGORY = "vevor/image"
+
+    def letterbox(self, image, target_w, target_h, fill_mode, fill_color):
+        frames = []
+        masks = []
+        for frame in image:
+            array = np.clip(255.0 * frame.cpu().numpy(), 0, 255).astype(np.uint8)
+            rgb, margin = letterbox_to_target(array, target_w, target_h, fill_mode, fill_color)
+            frames.append(rgb)
+            masks.append(margin)
+        return (
+            torch.from_numpy(np.stack(frames).astype(np.float32)),
+            torch.from_numpy(np.stack(masks).astype(np.float32)),
+        )
+
+
 class VevorPadSquare:
     """Pad to a square canvas without cropping, then resize to a target side.
 
@@ -681,7 +765,50 @@ def _ocr_as_text(ocr_json):
     return json.dumps(ocr_json, ensure_ascii=False, indent=1)
 
 
-def build_translation_prompt(ocr_json, locale, extra_rules=""):
+# Editable on the Comfy node; {language} / {locale} are substituted at runtime.
+TRANSLATION_PROMPT_BODY_TEMPLATE = (
+    "你是亚马逊商品图片的本地化文案专家。下面是 OCR 识别出的原文区域清单（JSON）。\n"
+    "请把每个区域的原文翻译成 {language}。\n"
+    "输出要求：\n"
+    "- 只输出一个 JSON 对象，不要解释、不要 markdown 代码块。\n"
+    '- 键是区域下标字符串（如 "0"、"3"），值是译文。\n'
+    "- 覆盖所有区域，不得遗漏，不得合并或拆分区域。\n"
+    "翻译要求：\n"
+    "- 忠实传达原意，不增删信息，不改变产品名、型号、规格与数字。\n"
+    "- 遵循 CLDR/ICU 规范：数字与金额按 {locale} 的千位分隔符和小数点书写，"
+    "货币与日期格式本地化，注意复数与阴阳性一致。\n"
+    "- 电商图片空间有限：在保住含义的前提下用简洁表达，优先短词，避免冗长从句。\n"
+    "- 沿用原文的视觉风格：全大写标题仍保持全大写，简洁短句仍保持短句。\n"
+    "- 品牌名、型号、条码等专有标识保持原样，不要翻译或改写。\n"
+    "- 数字、单位、型号必须保持原值：可以按目标语种更换千位符/小数点，"
+    "但不得改变数字本身，也不要替原文\"纠正\"数值。\n"
+    "- 若某个区域像是被 OCR 切碎的字形碎片（如 \"Vow\"、\"@0\"），"
+    "按原样返回，不要猜测它的含义，更不要意译。\n"
+    '- 对比图/图表标签必须本地化："Ours"、"Others" 等短标签要译成目标语'
+    "（德语 Unsere/Wir、Andere；法语 Notre/Nos、Autres；意大利语 Nostri、Altri；"
+    "西班牙语 Nuestros/Nuestra、Otros），不要保留英文。"
+)
+
+
+def _substitute_locale_placeholders(body, locale):
+    language = LOCALE_NAMES.get(locale, locale)
+    return body.replace("{language}", language).replace("{locale}", locale)
+
+
+def _translation_instruction_body(locale, prompt_body="", extra_rules=""):
+    """Instruction text only (no OCR appendix)."""
+    raw = (prompt_body or "").strip()
+    if raw:
+        body = _substitute_locale_placeholders(raw, locale)
+    else:
+        body = _substitute_locale_placeholders(TRANSLATION_PROMPT_BODY_TEMPLATE, locale)
+    rules = (extra_rules or "").strip()
+    if rules:
+        return body + f"\n\n额外要求：\n{rules}"
+    return body
+
+
+def build_translation_prompt(ocr_json, locale, extra_rules="", prompt_body=""):
     """Compose the instruction that turns OCR regions into a translation map.
 
     The output is keyed by region index on purpose: a phrase repeated in the ad
@@ -689,30 +816,10 @@ def build_translation_prompt(ocr_json, locale, extra_rules=""):
     could not tell apart. The locale's CLDR conventions are spelled out because
     a model left to itself will keep US punctuation for German prices.
     """
-    language = LOCALE_NAMES.get(locale, locale)
-    rules = (extra_rules or "").strip()
     parts = [
-        f"你是亚马逊商品图片的本地化文案专家。下面是 OCR 识别出的原文区域清单（JSON）。"
-        f"请把每个区域的原文翻译成 {language}。",
-        "输出要求：",
-        "- 只输出一个 JSON 对象，不要解释、不要 markdown 代码块。",
-        '- 键是区域下标字符串（如 "0"、"3"），值是译文。',
-        "- 覆盖所有区域，不得遗漏，不得合并或拆分区域。",
-        "翻译要求：",
-        "- 忠实传达原意，不增删信息，不改变产品名、型号、规格与数字。",
-        f"- 遵循 CLDR/ICU 规范：数字与金额按 {locale} 的千位分隔符和小数点书写，"
-        "货币与日期格式本地化，注意复数与阴阳性一致。",
-        "- 电商图片空间有限：在保住含义的前提下用简洁表达，优先短词，避免冗长从句。",
-        "- 沿用原文的视觉风格：全大写标题仍保持全大写，简洁短句仍保持短句。",
-        "- 品牌名、型号、条码等专有标识保持原样，不要翻译或改写。",
-        "- 数字、单位、型号必须保持原值：可以按目标语种更换千位符/小数点，"
-        "但不得改变数字本身，也不要替原文\"纠正\"数值。",
-        "- 若某个区域像是被 OCR 切碎的字形碎片（如 \"Vow\"、\"@0\"），"
-        "按原样返回，不要猜测它的含义，更不要意译。",
+        _translation_instruction_body(locale, prompt_body, extra_rules),
+        "OCR 原文：\n" + _ocr_as_text(ocr_json),
     ]
-    if rules:
-        parts.append(f"额外要求：\n{rules}")
-    parts.append("OCR 原文：\n" + _ocr_as_text(ocr_json))
     return "\n".join(parts)
 
 
@@ -721,8 +828,8 @@ class VevorTranslationPrompt:
 
     DESCRIPTION = (
         "Compose the JSON-in/JSON-out translation instruction for one locale "
-        "from Apply EasyOCR's JSON, carrying the CLDR rules the target language "
-        "needs."
+        "from Apply EasyOCR's JSON. The multiline prompt widget is shown on the "
+        "node and can be edited; OCR JSON is appended when the graph runs."
     )
 
     @classmethod
@@ -731,6 +838,13 @@ class VevorTranslationPrompt:
             "required": {
                 "ocr_json": ("JSON", {"forceInput": True}),
                 "locale": (["de", "fr", "it", "es"], {"default": "de"}),
+                "prompt": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": TRANSLATION_PROMPT_BODY_TEMPLATE,
+                    },
+                ),
                 "extra_rules": ("STRING", {"multiline": True, "default": ""}),
             }
         }
@@ -739,9 +853,12 @@ class VevorTranslationPrompt:
     RETURN_NAMES = ("prompt",)
     FUNCTION = "build"
     CATEGORY = "vevor/text"
+    OUTPUT_NODE = True
 
-    def build(self, ocr_json, locale, extra_rules=""):
-        return (build_translation_prompt(ocr_json, locale, extra_rules),)
+    def build(self, ocr_json, locale, prompt="", extra_rules=""):
+        full = build_translation_prompt(ocr_json, locale, extra_rules, prompt_body=prompt)
+        preview = full if len(full) <= 6000 else full[:6000] + "\n…"
+        return {"ui": {"text": [preview]}, "result": (full,)}
 
 
 class VevorSaveNamed:
@@ -977,6 +1094,31 @@ def _spec_with_unit(text):
     return bool(match) and match.group(2).lower() in _SPEC_UNITS
 
 
+_LOST_DECIMAL_TWO_DIGIT = re.compile(r"^([1-9])(\d)(HP|KW|hp|kw|Hp|Kw)$")
+
+
+def repair_lost_decimal_spec(text):
+    """Restore a decimal point OCR dropped before a small power unit.
+
+    EasyOCR often reads ``3.8HP`` as ``38HP``. Real two-digit engine ratings
+    above ~20 HP are rare on consumer listing art; treat them as a missing dot
+    between the first two digits instead.
+    """
+    token = str(text or "").strip()
+    match = _LOST_DECIMAL_TWO_DIGIT.match(token)
+    if not match:
+        return token
+    whole = int(match.group(1) + match.group(2))
+    if whole <= 20:
+        return token
+    unit = match.group(3)
+    if unit.isupper() or token.isupper():
+        unit = unit.upper()
+    elif unit.islower():
+        unit = unit.lower()
+    return f"{match.group(1)}.{match.group(2)}{unit}"
+
+
 def repair_spec_digits(text):
     """Turn a letter that only makes sense as a digit back into a digit.
 
@@ -1013,7 +1155,9 @@ def repair_numeric_ocr(text):
         token = match.group(0)
         if not any(ch.isdigit() for ch in token):
             return token
-        return token.translate(_CONFUSABLE)
+        token = token.translate(_CONFUSABLE)
+        token = repair_lost_decimal_spec(token)
+        return token
 
     return repair_spec_digits(_NUMERIC_TOKEN.sub(fix, text))
 
@@ -1369,6 +1513,7 @@ class VevorRestoreProtected:
 
 NODE_CLASS_MAPPINGS = {
     "VevorTextRender": VevorTextRender,
+    "VevorLetterboxToTarget": VevorLetterboxToTarget,
     "VevorPadSquare": VevorPadSquare,
     "VevorNameOutput": VevorNameOutput,
     "VevorTranslationPrompt": VevorTranslationPrompt,
@@ -1379,9 +1524,10 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorTextRender": "Text Render (OCR boxes, fit + wrap)",
+    "VevorLetterboxToTarget": "Letterbox to Target (margin mask)",
     "VevorPadSquare": "Pad to Square (no crop)",
     "VevorNameOutput": "Name Output (keyword-locale-slot)",
-    "VevorTranslationPrompt": "Translation Prompt (OCR → JSON map)",
+    "VevorTranslationPrompt": "Translation Prompt (editable, OCR → JSON map)",
     "VevorSaveNamed": "Save Named (connected prefix)",
     "VevorOcrGuard": "OCR Guard (brands / specs / noise)",
     "VevorRestoreProtected": "Restore Protected (brand pixels)",

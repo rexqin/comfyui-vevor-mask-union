@@ -63,57 +63,71 @@ LOCALE_NAMES = {
 }
 
 
-def build_eval_prompt(locale, render_report=""):
+EVAL_PROMPT_BODY_TEMPLATE = (
+    "你是亚马逊商品图片的本地化质检员。本次审查 {language}（locale={locale}）。\n"
+    "\n"
+    "你会收到两张图，顺序固定：\n"
+    "  图 1 = 原图（英文广告图）\n"
+    "  图 2 = 译文成图（本流程产出）\n"
+    "\n"
+    "请只在下列四个维度打分，每项 0-100 的整数，不要输出其它维度：\n"
+    "\n"
+    "1. translation_accuracy（译文准确度）\n"
+    "   - 图 2 的文字是否准确传达了图 1 的语义，不缺信息、不添信息、不改变卖点。\n"
+    "   - 产品名、型号、规格、数字、单位、品牌标识是否正确保留。\n"
+    '   - 明显误译、漏译、把非文字元素当单词翻译（例如把 logo 碎片、把 "0h" 误读成 "Oh"）都要扣分。\n'
+    "\n"
+    "2. typography_layout（文字排版）\n"
+    "   - 译文是否清晰可读，字号与原文视觉层级是否相称，没有被压扁或过度放大。\n"
+    "   - 是否有溢出边界、压住产品、被截断、行距拥挤、文字互相重叠。\n"
+    "   - 字重与对齐是否贴合原图风格（本流程统一使用 Inter Tight）。\n"
+    "\n"
+    "3. visual_consistency（画面一致性，文字以外）\n"
+    "   - 这是硬约束：除文字区域外，产品、人物、包装、背景、配色、光影、构图必须与原图一致。\n"
+    "   - 擦字是否留下模糊块、涂抹痕迹、接缝、色差；是否误擦掉图标、logo、二维码、装饰。\n"
+    "   - 是否凭空新增物件，或产品形状/角度/细节被改变。\n"
+    "\n"
+    "4. locale_conventions（本地化规范）\n"
+    "   - 数字与金额是否按目标语种的 CLDR 习惯书写（千位符、小数点、百分号与数字的空格）。\n"
+    "   - 计量单位、大小写风格、标点是否自然，是否存在英文标点或英文语序残留。\n"
+    "\n"
+    "另外输出以下布尔标记（true/false）：\n"
+    "  leftover_source_text —— 图 2 是否还能看到未被替换的英文原文\n"
+    "  added_gibberish —— 是否出现乱码、重影、无意义的字符块\n"
+    "  text_cut_off —— 是否有文字被截断或超出画布\n"
+    "\n"
+    "输出要求：\n"
+    "- 只输出一个 JSON 对象，不要解释、不要 markdown 代码块。\n"
+    "- 严格使用下面的结构：\n"
+    '{"scores":{"translation_accuracy":0,"typography_layout":0,"visual_consistency":0,"locale_conventions":0},'
+    '"flags":{"leftover_source_text":false,"added_gibberish":false,"text_cut_off":false},'
+    '"issues":[{"severity":"high","dimension":"translation_accuracy","detail":"具体问题"}],'
+    '"comment":"一句话结论"}\n'
+    "- issues 只列真实观察到的问题，按严重度排序；没有问题时给空数组。\n"
+    "- 不要输出总分，总分由流程计算。"
+)
+
+
+def _substitute_eval_placeholders(body, locale):
+    language = LOCALE_NAMES.get(locale, locale)
+    return body.replace("{language}", language).replace("{locale}", locale)
+
+
+def _eval_instruction_body(locale, prompt_body=""):
+    raw = (prompt_body or "").strip()
+    if raw:
+        return _substitute_eval_placeholders(raw, locale)
+    return _substitute_eval_placeholders(EVAL_PROMPT_BODY_TEMPLATE, locale)
+
+
+def build_eval_prompt(locale, render_report="", prompt_body=""):
     """Compose the review instruction for one locale.
 
     ``render_report`` is the JSON the renderer emitted (font size, line count,
     overflow flags). It is passed as *evidence to verify*, never as an answer:
     the renderer knows what it intended to draw, not whether it looks right.
     """
-    language = LOCALE_NAMES.get(locale, locale)
-    parts = [
-        f"你是亚马逊商品图片的本地化质检员。本次审查 {language}（locale={locale}）。",
-        "",
-        "你会收到两张图，顺序固定：",
-        "  图 1 = 原图（英文广告图）",
-        "  图 2 = 译文成图（本流程产出）",
-        "",
-        "请只在下列四个维度打分，每项 0-100 的整数，不要输出其它维度：",
-        "",
-        "1. translation_accuracy（译文准确度）",
-        "   - 图 2 的文字是否准确传达了图 1 的语义，不缺信息、不添信息、不改变卖点。",
-        "   - 产品名、型号、规格、数字、单位、品牌标识是否正确保留。",
-        "   - 明显误译、漏译、把非文字元素当单词翻译（例如把 logo 碎片、把 \"0h\" 误读成 \"Oh\"）都要扣分。",
-        "",
-        "2. typography_layout（文字排版）",
-        "   - 译文是否清晰可读，字号与原文视觉层级是否相称，没有被压扁或过度放大。",
-        "   - 是否有溢出边界、压住产品、被截断、行距拥挤、文字互相重叠。",
-        "   - 字重与对齐是否贴合原图风格（本流程统一使用 Inter Tight）。",
-        "",
-        "3. visual_consistency（画面一致性，文字以外）",
-        "   - 这是硬约束：除文字区域外，产品、人物、包装、背景、配色、光影、构图必须与原图一致。",
-        "   - 擦字是否留下模糊块、涂抹痕迹、接缝、色差；是否误擦掉图标、logo、二维码、装饰。",
-        "   - 是否凭空新增物件，或产品形状/角度/细节被改变。",
-        "",
-        "4. locale_conventions（本地化规范）",
-        "   - 数字与金额是否按目标语种的 CLDR 习惯书写（千位符、小数点、百分号与数字的空格）。",
-        "   - 计量单位、大小写风格、标点是否自然，是否存在英文标点或英文语序残留。",
-        "",
-        "另外输出以下布尔标记（true/false）：",
-        "  leftover_source_text —— 图 2 是否还能看到未被替换的英文原文",
-        "  added_gibberish —— 是否出现乱码、重影、无意义的字符块",
-        "  text_cut_off —— 是否有文字被截断或超出画布",
-        "",
-        "输出要求：",
-        "- 只输出一个 JSON 对象，不要解释、不要 markdown 代码块。",
-        "- 严格使用下面的结构：",
-        '{"scores":{"translation_accuracy":0,"typography_layout":0,"visual_consistency":0,"locale_conventions":0},'
-        '"flags":{"leftover_source_text":false,"added_gibberish":false,"text_cut_off":false},'
-        '"issues":[{"severity":"high","dimension":"translation_accuracy","detail":"具体问题"}],'
-        '"comment":"一句话结论"}',
-        "- issues 只列真实观察到的问题，按严重度排序；没有问题时给空数组。",
-        "- 不要输出总分，总分由流程计算。",
-    ]
+    parts = [_eval_instruction_body(locale, prompt_body)]
     report = (render_report or "").strip()
     if report:
         parts += [
@@ -288,9 +302,9 @@ class VevorEvalPrompt:
     """Build the vision-model review prompt for one locale."""
 
     DESCRIPTION = (
-        "Compose the QA rubric prompt that makes a vision model score a rendered "
-        "locale against the source ad on translation, typography, non-text visual "
-        "consistency and CLDR conventions."
+        "Compose the QA rubric prompt for vision scoring. The multiline prompt "
+        "widget is shown on the node and can be edited; render_report is appended "
+        "at runtime when connected."
     )
 
     @classmethod
@@ -298,6 +312,13 @@ class VevorEvalPrompt:
         return {
             "required": {
                 "locale": (["de", "fr", "it", "es"], {"default": "de"}),
+                "prompt": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": EVAL_PROMPT_BODY_TEMPLATE,
+                    },
+                ),
             },
             "optional": {
                 "render_report": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
@@ -308,9 +329,12 @@ class VevorEvalPrompt:
     RETURN_NAMES = ("prompt",)
     FUNCTION = "build"
     CATEGORY = "vevor/eval"
+    OUTPUT_NODE = True
 
-    def build(self, locale, render_report=""):
-        return (build_eval_prompt(locale, render_report),)
+    def build(self, locale, prompt="", render_report=""):
+        full = build_eval_prompt(locale, render_report, prompt_body=prompt)
+        preview = full if len(full) <= 6000 else full[:6000] + "\n…"
+        return {"ui": {"text": [preview]}, "result": (full,)}
 
 
 class VevorEvalScore:
@@ -366,6 +390,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "VevorEvalPrompt": "Eval Prompt (QA rubric, 4 dimensions)",
+    "VevorEvalPrompt": "Eval Prompt (editable QA rubric, 4 dimensions)",
     "VevorEvalScore": "Eval Score (weighted total + verdict)",
 }
