@@ -611,6 +611,18 @@ def letterbox_to_target(array, target_w, target_h, fill_mode, fill_color):
     if fill_mode == "solid":
         canvas = Image.new("RGB", (target_w, target_h), _parse_color(fill_color, (255, 255, 255)))
         canvas.paste(scaled, (left, top))
+    elif fill_mode == "reflect":
+        data = np.asarray(scaled)
+        pad_top = top
+        pad_bottom = target_h - new_h - top
+        pad_left = left
+        pad_right = target_w - new_w - left
+        padded = np.pad(
+            data,
+            ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
+            mode="reflect",
+        )
+        canvas = Image.fromarray(padded)
     else:
         data = np.asarray(scaled)
         padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
@@ -648,7 +660,7 @@ class VevorLetterboxToTarget:
                 "image": ("IMAGE",),
                 "target_w": ("INT", {"default": 2560, "min": 64, "max": 8192, "step": 8}),
                 "target_h": ("INT", {"default": 2560, "min": 64, "max": 8192, "step": 8}),
-                "fill_mode": (["edge_extend", "solid"], {"default": "edge_extend"}),
+                "fill_mode": (["reflect", "edge_extend", "solid"], {"default": "reflect"}),
                 "fill_color": ("STRING", {"default": "#ffffff"}),
             }
         }
