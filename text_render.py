@@ -1195,6 +1195,34 @@ def repair_numeric_ocr(text):
     return repair_spec_digits(_NUMERIC_TOKEN.sub(fix, text))
 
 
+def repair_label_misread(text):
+    """Fix common chart/logo misreads before classify / translate."""
+    raw = str(text or "").strip()
+    if re.match(r"^@U[lI1|]$", raw, re.IGNORECASE):
+        return "Ours"
+    if re.match(r"^MUM[I1L]+(?:\s+MUM)?$", raw, re.IGNORECASE):
+        return "VEVOR"
+    return raw
+
+
+def regions_to_erase_mask(regions, width, height):
+    """Single-frame mask (1,H,W) covering boxes that need diffusion erase."""
+    if torch is None:  # pragma: no cover
+        raise RuntimeError("torch is required to build erase masks")
+    w = max(1, int(width or 1))
+    h = max(1, int(height or 1))
+    plane = np.zeros((h, w), dtype=np.float32)
+    for region in regions:
+        x1, y1, x2, y2 = region["box"]
+        left = max(0, int(round(x1)))
+        top = max(0, int(round(y1)))
+        right = min(w, int(round(x2)))
+        bottom = min(h, int(round(y2)))
+        if right > left and bottom > top:
+            plane[top:bottom, left:right] = 1.0
+    return torch.from_numpy(plane).unsqueeze(0)
+
+
 def is_noise_fragment(text):
     """True for OCR debris that carries no words: "@0", "|", stray punctuation."""
     stripped = str(text or "").strip()
@@ -1305,11 +1333,20 @@ def classify_regions(regions, brands, repair_numbers=True, drop_noise=True,
     the prompt payload and the render payload can be different sizes while still
     agreeing on the keys the model answers with.
     """
-    translate, render, protected, actions = [], [], [], []
+    translate, render, protected, erase, actions = [], [], [], [], []
     pending = []
     for position, region in enumerate(regions):
         index = region.get("index", position)
-        source = region["text"]
+        raw = region["text"]
+        source = repair_label_misread(raw)
+        if source != raw:
+            actions.append({
+                "index": index,
+                "box": region["box"],
+                "text": source,
+                "source_raw": raw,
+                "action": "repair:label",
+            })
         text = repair_numeric_ocr(source) if repair_numbers else source
         entry = {
             "index": index,
@@ -1374,11 +1411,13 @@ def classify_regions(regions, brands, repair_numbers=True, drop_noise=True,
 
         render.append(entry)
         translate.append(entry)
+        erase.append(entry)
 
     return {
         "translate": translate,
         "render": render,
         "protected": protected,
+        "erase": erase,
         "actions": actions,
     }
 
@@ -1411,6 +1450,7 @@ def summarise_guard(result, brands):
         counts[action["action"]] = counts.get(action["action"], 0) + 1
     lines = [
         f"translate={len(result['translate'])} render={len(result['render'])} "
+        f"erase={len(result.get('erase', []))} "
         f"protected={len(result['protected'])} brands={','.join(brands)}"
     ]
     lines.append("  " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
@@ -1454,8 +1494,14 @@ class VevorOcrGuard:
             }
         }
 
-    RETURN_TYPES = ("JSON", "JSON", "JSON", "STRING")
-    RETURN_NAMES = ("prompt_json", "render_json", "protected_json", "summary")
+    RETURN_TYPES = ("JSON", "JSON", "JSON", "STRING", "MASK")
+    RETURN_NAMES = (
+        "prompt_json",
+        "render_json",
+        "protected_json",
+        "summary",
+        "erase_mask",
+    )
     FUNCTION = "guard"
     CATEGORY = "vevor/text"
 
@@ -1469,11 +1515,13 @@ class VevorOcrGuard:
             protect_logo_fragments=protect_logo_fragments,
             logo_max_height=logo_max_height,
         )
+        erase_mask = regions_to_erase_mask(result["erase"], width, height)
         return (
             regions_to_payload(result["translate"], width, height),
             regions_to_payload(result["render"], width, height),
             regions_to_payload(result["protected"], width, height),
             summarise_guard(result, names),
+            erase_mask,
         )
 
 
