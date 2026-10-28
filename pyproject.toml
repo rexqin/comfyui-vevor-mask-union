@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "vevor-mask-union"
 version = "0.3.3"
 description = "ComfyUI nodes for Vevor listing images: union a MASK batch, render translated text into OCR boxes with a real font, square-pad without cropping, and score a rendered locale against the source with a vision model"
