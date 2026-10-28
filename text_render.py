@@ -588,8 +588,25 @@ class VevorTextRender:
         return (torch.from_numpy(out).unsqueeze(0), json.dumps(report, ensure_ascii=False, indent=1))
 
 
-def letterbox_to_target(array, target_w, target_h, fill_mode, fill_color):
-    """Fit inside target_w×target_h, centre, return (rgb float32, margin mask float32).
+def _align_inset(inner: int, outer: int, align: str) -> int:
+    slack = outer - inner
+    if align in ("top", "left"):
+        return 0
+    if align in ("bottom", "right"):
+        return max(0, slack)
+    return max(0, slack // 2)
+
+
+def letterbox_to_target(
+    array,
+    target_w,
+    target_h,
+    fill_mode,
+    fill_color,
+    valign="center",
+    halign="center",
+):
+    """Fit inside target_w×target_h, place content, return (rgb float32, margin mask float32).
 
     The margin mask is 1.0 on synthetic border pixels (candidates for diffusion
     outpaint) and 0.0 on the scaled original content.
@@ -602,8 +619,8 @@ def letterbox_to_target(array, target_w, target_h, fill_mode, fill_color):
     new_w = max(1, int(round(src.width * scale)))
     new_h = max(1, int(round(src.height * scale)))
     scaled = src.resize((new_w, new_h), Image.LANCZOS)
-    left = (target_w - new_w) // 2
-    top = (target_h - new_h) // 2
+    left = _align_inset(new_w, target_w, halign)
+    top = _align_inset(new_h, target_h, valign)
 
     margin_mask = np.ones((target_h, target_w), dtype=np.float32)
     margin_mask[top : top + new_h, left : left + new_w] = 0.0
@@ -649,8 +666,8 @@ class VevorLetterboxToTarget:
     """
 
     DESCRIPTION = (
-        "Scale to fit inside target_w×target_h, centre on canvas, output margin "
-        "mask for outpaint. Does not run diffusion itself."
+        "Scale to fit inside target_w×target_h, align on canvas (e.g. bottom for "
+        "footer text flush with the plate bottom), output margin mask for outpaint."
     )
 
     @classmethod
@@ -658,10 +675,12 @@ class VevorLetterboxToTarget:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "target_w": ("INT", {"default": 2560, "min": 64, "max": 8192, "step": 8}),
-                "target_h": ("INT", {"default": 2560, "min": 64, "max": 8192, "step": 8}),
+                "target_w": ("INT", {"default": 2048, "min": 64, "max": 8192, "step": 8}),
+                "target_h": ("INT", {"default": 2048, "min": 64, "max": 8192, "step": 8}),
                 "fill_mode": (["reflect", "edge_extend", "solid"], {"default": "reflect"}),
                 "fill_color": ("STRING", {"default": "#ffffff"}),
+                "valign": (["center", "top", "bottom"], {"default": "bottom"}),
+                "halign": (["center", "left", "right"], {"default": "center"}),
             }
         }
 
@@ -670,12 +689,14 @@ class VevorLetterboxToTarget:
     FUNCTION = "letterbox"
     CATEGORY = "vevor/image"
 
-    def letterbox(self, image, target_w, target_h, fill_mode, fill_color):
+    def letterbox(self, image, target_w, target_h, fill_mode, fill_color, valign, halign):
         frames = []
         masks = []
         for frame in image:
             array = np.clip(255.0 * frame.cpu().numpy(), 0, 255).astype(np.uint8)
-            rgb, margin = letterbox_to_target(array, target_w, target_h, fill_mode, fill_color)
+            rgb, margin = letterbox_to_target(
+                array, target_w, target_h, fill_mode, fill_color, valign, halign
+            )
             frames.append(rgb)
             masks.append(margin)
         return (
@@ -702,7 +723,7 @@ class VevorPadSquare:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "target_size": ("INT", {"default": 2560, "min": 64, "max": 8192, "step": 8}),
+                "target_size": ("INT", {"default": 2048, "min": 64, "max": 8192, "step": 8}),
                 "fill_mode": (["edge_extend", "solid"], {"default": "edge_extend"}),
                 "fill_color": ("STRING", {"default": "#ffffff"}),
             }
