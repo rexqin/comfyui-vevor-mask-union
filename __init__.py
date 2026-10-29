@@ -68,6 +68,24 @@ except Exception:  # noqa: BLE001
     _EVAL_CLASS_MAPPINGS = {}
     _EVAL_DISPLAY_MAPPINGS = {}
 
+try:
+    _ocr = _load_sibling("vevor_mask_union_ocr_providers", "ocr_providers.py")
+    _OCR_CLASS_MAPPINGS = _ocr.NODE_CLASS_MAPPINGS
+    _OCR_DISPLAY_MAPPINGS = _ocr.NODE_DISPLAY_NAME_MAPPINGS
+except Exception:  # noqa: BLE001
+    traceback.print_exc()
+    _OCR_CLASS_MAPPINGS = {}
+    _OCR_DISPLAY_MAPPINGS = {}
+
+try:
+    _generative = _load_sibling("vevor_mask_union_generative_pipeline", "generative_pipeline.py")
+    _GENERATIVE_CLASS_MAPPINGS = _generative.NODE_CLASS_MAPPINGS
+    _GENERATIVE_DISPLAY_MAPPINGS = _generative.NODE_DISPLAY_NAME_MAPPINGS
+except Exception:  # noqa: BLE001
+    traceback.print_exc()
+    _GENERATIVE_CLASS_MAPPINGS = {}
+    _GENERATIVE_DISPLAY_MAPPINGS = {}
+
 
 class VevorMaskBatchUnion:
     """Fold a MASK batch (one frame per region) into a single union mask."""
@@ -107,12 +125,16 @@ NODE_CLASS_MAPPINGS = {
     "VevorMaskBatchUnion": VevorMaskBatchUnion,
     **_TEXT_CLASS_MAPPINGS,
     **_EVAL_CLASS_MAPPINGS,
+    **_OCR_CLASS_MAPPINGS,
+    **_GENERATIVE_CLASS_MAPPINGS,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorMaskBatchUnion": "Mask Batch Union (regions → 1)",
     **_TEXT_DISPLAY_MAPPINGS,
     **_EVAL_DISPLAY_MAPPINGS,
+    **_OCR_DISPLAY_MAPPINGS,
+    **_GENERATIVE_DISPLAY_MAPPINGS,
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "VevorMaskBatchUnion"]

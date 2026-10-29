@@ -798,6 +798,11 @@ def _ocr_as_text(ocr_json):
     return json.dumps(ocr_json, ensure_ascii=False, indent=1)
 
 
+try:
+    from listing_brand_rules import LISTING_LAYOUT_EXTRA_RULES
+except ImportError:
+    from .listing_brand_rules import LISTING_LAYOUT_EXTRA_RULES
+
 # Editable on the Comfy node; {language} / {locale} are substituted at runtime.
 TRANSLATION_PROMPT_BODY_TEMPLATE = (
     "你是亚马逊商品图片的本地化文案专家。下面是 OCR 识别出的原文区域清单（JSON）。\n"
@@ -878,7 +883,10 @@ class VevorTranslationPrompt:
                         "default": TRANSLATION_PROMPT_BODY_TEMPLATE,
                     },
                 ),
-                "extra_rules": ("STRING", {"multiline": True, "default": ""}),
+                "extra_rules": (
+                    "STRING",
+                    {"multiline": True, "default": LISTING_LAYOUT_EXTRA_RULES},
+                ),
             }
         }
 
@@ -1404,8 +1412,10 @@ def classify_regions(regions, brands, repair_numbers=True, drop_noise=True,
             continue
 
         if is_literal_spec(entry["text"]):
-            # Rendered verbatim, never sent to the translator.
-            render.append({**entry, "literal": True})
+            # Rendered verbatim, never sent to the translator; still erased before redraw.
+            spec = {**entry, "literal": True}
+            render.append(spec)
+            erase.append(entry)
             actions.append({**entry, "action": "literal:spec"})
             continue
 

@@ -63,6 +63,11 @@ LOCALE_NAMES = {
 }
 
 
+try:
+    from listing_brand_rules import LISTING_EVAL_TYPOGRAPHY_APPENDIX
+except ImportError:
+    from .listing_brand_rules import LISTING_EVAL_TYPOGRAPHY_APPENDIX
+
 EVAL_PROMPT_BODY_TEMPLATE = (
     "你是亚马逊商品图片的本地化质检员。本次审查 {language}（locale={locale}）。\n"
     "\n"
@@ -81,7 +86,8 @@ EVAL_PROMPT_BODY_TEMPLATE = (
     "   - 译文是否清晰可读，字号与原文视觉层级是否相称，没有被压扁或过度放大。\n"
     "   - 是否有溢出边界、压住产品、被截断、行距拥挤、文字互相重叠。\n"
     "   - 字重与对齐是否贴合原图风格（本流程统一使用 Inter Tight）。\n"
-    "\n"
+    + LISTING_EVAL_TYPOGRAPHY_APPENDIX
+    + "\n"
     "3. visual_consistency（画面一致性，文字以外）\n"
     "   - 这是硬约束：除文字区域外，产品、人物、包装、背景、配色、光影、构图必须与原图一致。\n"
     "   - 擦字是否留下模糊块、涂抹痕迹、接缝、色差；是否误擦掉图标、logo、二维码、装饰。\n"

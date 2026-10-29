@@ -1,0 +1,21 @@
+xport const ANALYZE_PROMPT = `你是图像版面分析器。请找出图中所有可见文字块（主标题、副标题、图标旁短标签、胶囊横幅、角标小字、产品上的品牌字样等），对每一块输出：
+- text：原文（原样转写，保留换行）
+- bbox：文字自身边界框 [x, y, w, h]，归一化 0~1（相对整图宽高，x/y 为左上角）
+- containerBbox：文字所在色块/卡片/横幅/胶囊条的边界 [x, y, w, h]（归一化，含内边距）。此字段非常重要（重绘时文字不得越出此框）：只要文字背后有一块相对均匀的底色（白卡、色块、半透明条、照片上的深色标签条等）就必须给出，宁可略大不可缺失；只有文字确实直接压在照片/物体纹理上、背后没有任何均匀底板时才填 null
+- align：left / center / right（该文字相对其所在色块/卡片的实际对齐；卡片、色块内的标题与副标题多为居中，请仔细观察后填写，不要习惯性一律填 left）
+- bold：true / false（文字是否加粗）
+- sizePct：字号相对图片高度的百分比（估算，如 3.2 表示 3.2%）
+- fontFamily：字体族，先看字母的实际字形再归类，必须从以下枚举中选一个：
+  · geometric-sans：几何无衬线（Futura / Poppins / Century Gothic 一类）——特征：小写 a 是单层（一个圆加一根竖），o 接近正圆，大写 C 是圆润的圆弧、开口小，G 不带横翘
+  · neo-grotesque-sans：新怪诞无衬线（Helvetica / Inter / Roboto / Arial 一类）——特征：小写 a 是双层（上方有一个弯钩），大写 C 的左侧是垂直切面、开口大
+  · humanist-sans：人文无衬线（Gill Sans / Frutiger / Segoe 一类）——字腔开阔、笔画有书写余韵
+  · grotesque-sans：早期怪诞无衬线（Franklin Gothic / News Gothic 一类）
+  · condensed-sans：窄体无衬线（长而窄的字形）
+  · rounded-sans：圆体（笔画端部全圆角）
+  · serif：衬线体（字母末端有脚）
+  · slab-serif：板衬线（衬线厚而方）
+  · script：手写 / 花体
+  · display：装饰展示体（描边、拉伸、特殊造型）
+  · mono：等宽
+  归类要点：先看小写 a 是单层还是双层（单层 → 几何；双层 → 怪诞/人文），再看大写 C 的左缘是圆弧还是垂直切面（圆弧 → 几何；垂直切面 → 怪诞）。同一张图里同类文字必须填同一个值，不要同一套字体给出两种结论。看不清就填 null，不要猜。
+- glyphTraits：字形指纹（仅对 title / bullet 这类大字必填，其余可填 null）。用英文短句写出你能在图上看到的、可拿来核对的字符形状特征，多条用分号隔开。禁止写字体名字，只写形状。例："single-storey a
