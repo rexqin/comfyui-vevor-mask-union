@@ -344,6 +344,14 @@ class VevorGenerativeAnalyzePrompt:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "schema_template": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "placeholder": "留空=包内 generative_analyze_prompt.txt；可覆写版面 JSON 字段说明",
+                    },
+                ),
                 "user_line": (
                     "STRING",
                     {
@@ -359,8 +367,8 @@ class VevorGenerativeAnalyzePrompt:
     FUNCTION = "build"
     CATEGORY = "vevor/generative"
 
-    def build(self, user_line: str):
-        body = load_analyze_prompt()
+    def build(self, schema_template: str, user_line: str):
+        body = (schema_template or "").strip() or load_analyze_prompt()
         return (f"{body}\n\n{user_line.strip()}",)
 
 
@@ -389,6 +397,14 @@ class VevorGenerativeTranslatePrompt:
             "required": {
                 "blocks": ("JSON", {"forceInput": True}),
                 "target_lang": ("STRING", {"default": "德语"}),
+                "rules_template": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "placeholder": "留空=内置规则；占位符 {lang} {extra} {rows}",
+                    },
+                ),
             }
         }
 
@@ -397,7 +413,7 @@ class VevorGenerativeTranslatePrompt:
     FUNCTION = "build"
     CATEGORY = "vevor/generative"
 
-    def build(self, blocks, target_lang: str):
+    def build(self, blocks, target_lang: str, rules_template: str = ""):
         items = []
         for b in _blocks_as_list(blocks):
             if b.get("isLogo") or not str(b.get("text") or "").strip():
@@ -435,7 +451,7 @@ class VevorGenerativeTranslatePrompt:
             escaped_text = it["text"].replace("\n", "\\n")
             rows.append(f'{it["id"]}. {role}"{escaped_text}"{line_hint}{whole_hint}')
         extra = build_paragraph_section(items)
-        prompt = build_translate_prompt("\n".join(rows), target_lang, extra)
+        prompt = build_translate_prompt("\n".join(rows), target_lang, extra, rules_template)
         return (prompt,)
 
 
@@ -475,6 +491,14 @@ class VevorGenerativeGenerateBundle:
             "required": {
                 "blocks": ("JSON", {"forceInput": True}),
                 "font_dir": ("STRING", {"default": "fonts"}),
+                "image_prompt_template": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "placeholder": "留空=内置 Qwen 指令；必须含 {rows} 插入动态换字行",
+                    },
+                ),
             }
         }
 
@@ -483,10 +507,11 @@ class VevorGenerativeGenerateBundle:
     FUNCTION = "build"
     CATEGORY = "vevor/generative"
 
-    def build(self, blocks, font_dir: str):
+    def build(self, blocks, font_dir: str, image_prompt_template: str = ""):
         bl = _blocks_as_list(blocks)
         rows = build_image_rows(bl, font_dir)
-        prompt = build_image_prompt(rows) if rows.strip() else build_image_prompt('"(no translatable rows)" -> ""')
+        row_text = rows if rows.strip() else '"(no translatable rows)" -> ""'
+        prompt = build_image_prompt(row_text, image_prompt_template)
         glyphs = build_glyph_chars(bl)
         return (prompt, glyphs)
 

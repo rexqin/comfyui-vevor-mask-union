@@ -8,11 +8,24 @@ _ANALYZE_PATH = os.path.join(_HERE, "generative_analyze_prompt.txt")
 
 def load_analyze_prompt() -> str:
     with open(_ANALYZE_PATH, encoding="utf-8") as f:
-        return f.read().strip()
+        raw = f.read().strip()
+    # Recover from accidental JS export pasted into the .txt source file.
+    if raw.startswith("xport") or "ANALYZE_PROMPT" in raw[:120]:
+        tick = raw.find("`")
+        if tick >= 0:
+            raw = raw[tick + 1 :]
+            end = raw.rfind("`")
+            if end > 0:
+                raw = raw[:end]
+    return raw.strip()
 
 
-def build_translate_prompt(rows: str, lang: str, extra: str = "") -> str:
-    return f"""你是资深电商文案翻译专家。把下面每条文案翻译成【{lang}（面向母语消费者）】，要求：
+def _effective_template(custom: str, default: str) -> str:
+    text = (custom or "").strip()
+    return text if text else default
+
+
+DEFAULT_TRANSLATE_RULES = """你是资深电商文案翻译专家。把下面每条文案翻译成【{lang}（面向母语消费者）】，要求：
 - 如附带原图，请结合图片理解产品与部件的实际语境，选择专业准确的术语；但只翻译清单中的条目，不要翻译图上其它文字
 - 译文语气自然、符合本土表达习惯，电商短句风格，简练贴合原意，不要翻译腔
 - 每条译文的行数、分行位置必须与原文一致：原文中的 \\n 表示换行，译文同样用 \\n 表示相同位置的换行；禁止把多行合并成一行，禁止跨行调换语序
@@ -27,6 +40,18 @@ def build_translate_prompt(rows: str, lang: str, extra: str = "") -> str:
 
 条目：
 {rows}"""
+
+
+def build_translate_prompt(
+    rows: str,
+    lang: str,
+    extra: str = "",
+    rules_template: str = "",
+) -> str:
+    tpl = _effective_template(rules_template, DEFAULT_TRANSLATE_RULES)
+    if "{rows}" not in tpl:
+        tpl = tpl.rstrip() + "\n\n条目：\n{rows}"
+    return tpl.format(lang=lang, rows=rows, extra=extra)
 
 
 def build_compact_section(over_items) -> str:
@@ -65,8 +90,7 @@ def build_paragraph_section(items) -> str:
     )
 
 
-def build_image_prompt(rows: str) -> str:
-    return f"""TYPEFACE LOCK — every letter, digit and accent below is drawn from the second image, never from your own font.
+DEFAULT_IMAGE_PROMPT = """TYPEFACE LOCK — every letter, digit and accent below is drawn from the second image, never from your own font.
 
 One shape rule that matters most: every stroke ends in a flat cut parallel to the baseline — horizontal, never slanted, never rounded off.
 
@@ -86,3 +110,10 @@ Hard rules — these override everything else:
 Everything else in the first image stays exactly as it is — including the logos, model numbers and watermarks on the product.
 
 Last check, before you finish — the typeface must not slip: compare every drawn word with the second image letter by letter, and if any character would not pass as the same font, redraw that word from the second image."""
+
+
+def build_image_prompt(rows: str, header_template: str = "") -> str:
+    tpl = _effective_template(header_template, DEFAULT_IMAGE_PROMPT)
+    if "{rows}" not in tpl:
+        tpl = tpl.rstrip() + "\n{rows}"
+    return tpl.format(rows=rows)
