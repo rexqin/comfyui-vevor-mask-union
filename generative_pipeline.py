@@ -482,6 +482,69 @@ class VevorGenerativeApplyTranslations:
         return (data,)
 
 
+def _norm_source_key(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _parse_translation_override_map(raw: str) -> dict[str, str]:
+    """API / widget JSON → normalized source → translation."""
+    out: dict[str, str] = {}
+    text = str(raw or "").strip()
+    if not text:
+        return out
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        return out
+    items = obj.get("items") if isinstance(obj, dict) else obj
+    if not isinstance(items, list):
+        return out
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        source = _norm_source_key(row.get("source") or row.get("text") or "")
+        translation = str(row.get("translation") or "").replace("\\n", "\n").strip()
+        if source and translation:
+            out[source] = translation
+    return out
+
+
+class VevorGenerativeMergeTranslationOverrides:
+    """Merge optional API translation overrides into blocks (match by source text)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "blocks": ("JSON", {"forceInput": True}),
+                "translation_overrides": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "placeholder": '可选 JSON：{"items":[{"source":"…","translation":"…"}]}',
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("JSON",)
+    RETURN_NAMES = ("blocks",)
+    FUNCTION = "merge"
+    CATEGORY = "vevor/generative"
+
+    def merge(self, blocks, translation_overrides: str = ""):
+        data = [dict(b) for b in _blocks_as_list(blocks)]
+        overrides = _parse_translation_override_map(translation_overrides)
+        if not overrides:
+            return (data,)
+        for b in data:
+            key = _norm_source_key(b.get("text") or "")
+            if key in overrides:
+                b["translation"] = overrides[key]
+        return (data,)
+
+
 class VevorGenerativeTranslationReport:
     """Per-block source + translation JSON for Preview / Gateway GET /jobs."""
 
@@ -517,7 +580,8 @@ class VevorGenerativeTranslationReport:
                 }
             )
         payload = {"lang": output_lang, "items": items}
-        return (json.dumps(payload, ensure_ascii=False, indent=2),)
+        report = json.dumps(payload, ensure_ascii=False, indent=2)
+        return {"ui": {"text": [report]}, "result": (report,)}
 
 
 class VevorGenerativeGenerateBundle:
@@ -582,6 +646,7 @@ NODE_CLASS_MAPPINGS = {
     "VevorGenerativeParseBlocks": VevorGenerativeParseBlocks,
     "VevorGenerativeTranslatePrompt": VevorGenerativeTranslatePrompt,
     "VevorGenerativeApplyTranslations": VevorGenerativeApplyTranslations,
+    "VevorGenerativeMergeTranslationOverrides": VevorGenerativeMergeTranslationOverrides,
     "VevorGenerativeTranslationReport": VevorGenerativeTranslationReport,
     "VevorGenerativeGenerateBundle": VevorGenerativeGenerateBundle,
     "VevorGenerativeGlyphCard": VevorGenerativeGlyphCard,
@@ -592,6 +657,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorGenerativeParseBlocks": "Generative · Parse Blocks JSON",
     "VevorGenerativeTranslatePrompt": "Generative · Translate Prompt",
     "VevorGenerativeApplyTranslations": "Generative · Apply Translations",
+    "VevorGenerativeMergeTranslationOverrides": "Generative · Merge Translation Overrides",
     "VevorGenerativeTranslationReport": "Generative · Translation Report",
     "VevorGenerativeGenerateBundle": "Generative · Generate Prompt + Glyphs",
     "VevorGenerativeGlyphCard": "Generative · Glyph Reference Card",
