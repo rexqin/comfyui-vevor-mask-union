@@ -482,6 +482,44 @@ class VevorGenerativeApplyTranslations:
         return (data,)
 
 
+class VevorGenerativeTranslationReport:
+    """Per-block source + translation JSON for Preview / Gateway GET /jobs."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "blocks": ("JSON", {"forceInput": True}),
+                "output_lang": (["de", "fr", "it", "es"],),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("report",)
+    FUNCTION = "build"
+    CATEGORY = "vevor/generative"
+    OUTPUT_NODE = True
+
+    def build(self, blocks, output_lang: str):
+        items = []
+        for b in _blocks_as_list(blocks):
+            if b.get("isLogo"):
+                continue
+            source = str(b.get("text") or "").strip()
+            if not source:
+                continue
+            translation = str(b.get("translation") or "").strip()
+            items.append(
+                {
+                    "id": int(b.get("id") or 0),
+                    "source": source,
+                    "translation": translation,
+                }
+            )
+        payload = {"lang": output_lang, "items": items}
+        return (json.dumps(payload, ensure_ascii=False, indent=2),)
+
+
 class VevorGenerativeGenerateBundle:
     """Build Qwen edit prompt + glyph-card character set."""
 
@@ -544,6 +582,7 @@ NODE_CLASS_MAPPINGS = {
     "VevorGenerativeParseBlocks": VevorGenerativeParseBlocks,
     "VevorGenerativeTranslatePrompt": VevorGenerativeTranslatePrompt,
     "VevorGenerativeApplyTranslations": VevorGenerativeApplyTranslations,
+    "VevorGenerativeTranslationReport": VevorGenerativeTranslationReport,
     "VevorGenerativeGenerateBundle": VevorGenerativeGenerateBundle,
     "VevorGenerativeGlyphCard": VevorGenerativeGlyphCard,
 }
@@ -553,6 +592,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorGenerativeParseBlocks": "Generative · Parse Blocks JSON",
     "VevorGenerativeTranslatePrompt": "Generative · Translate Prompt",
     "VevorGenerativeApplyTranslations": "Generative · Apply Translations",
+    "VevorGenerativeTranslationReport": "Generative · Translation Report",
     "VevorGenerativeGenerateBundle": "Generative · Generate Prompt + Glyphs",
     "VevorGenerativeGlyphCard": "Generative · Glyph Reference Card",
 }

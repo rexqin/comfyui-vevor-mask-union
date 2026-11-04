@@ -15,6 +15,11 @@ problems, so the number is recomputed from the dimensions and flags here.
 import importlib.util
 import json
 import os
+import sys
+
+_PACK_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PACK_DIR not in sys.path:
+    sys.path.insert(0, _PACK_DIR)
 
 # ComfyUI loads a custom-node directory by *path*, so a plain `import
 # text_render` does not resolve there. Load the sibling explicitly, the same way
@@ -63,10 +68,7 @@ LOCALE_NAMES = {
 }
 
 
-try:
-    from listing_brand_rules import LISTING_EVAL_TYPOGRAPHY_APPENDIX
-except ImportError:
-    from .listing_brand_rules import LISTING_EVAL_TYPOGRAPHY_APPENDIX
+from listing_brand_rules import LISTING_EVAL_TYPOGRAPHY_APPENDIX
 
 EVAL_PROMPT_BODY_TEMPLATE = (
     "你是亚马逊商品图片的本地化质检员。本次审查 {language}（locale={locale}）。\n"

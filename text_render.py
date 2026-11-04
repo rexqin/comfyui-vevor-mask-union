@@ -27,8 +27,13 @@ untouched.
 import json
 import os
 import re
+import sys
 
 import numpy as np
+
+_PACK_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PACK_DIR not in sys.path:
+    sys.path.insert(0, _PACK_DIR)
 from PIL import Image, ImageDraw, ImageFont
 
 try:  # ComfyUI always provides torch; absent only when running unit tests.
@@ -798,10 +803,7 @@ def _ocr_as_text(ocr_json):
     return json.dumps(ocr_json, ensure_ascii=False, indent=1)
 
 
-try:
-    from listing_brand_rules import LISTING_LAYOUT_EXTRA_RULES
-except ImportError:
-    from .listing_brand_rules import LISTING_LAYOUT_EXTRA_RULES
+from listing_brand_rules import LISTING_LAYOUT_EXTRA_RULES
 
 # Editable on the Comfy node; {language} / {locale} are substituted at runtime.
 TRANSLATION_PROMPT_BODY_TEMPLATE = (
