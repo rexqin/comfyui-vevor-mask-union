@@ -18,8 +18,13 @@ if _HERE not in sys.path:
 from generative_prompts import (  # noqa: E402
     build_image_prompt,
     build_paragraph_section,
-    build_translate_prompt,
     load_analyze_prompt,
+)
+from generative_template import (  # noqa: E402
+    format_lang_section,
+    format_retry_section,
+    render_template,
+    resolve_template,
 )
 
 # Ported from demo/lib-text.mjs
@@ -441,6 +446,153 @@ def _blocks_as_list(blocks) -> list[dict]:
     return blocks if isinstance(blocks, list) else []
 
 
+def _translate_items_for_prompt(blocks, lang_code: str) -> list[dict]:
+    lang_factor = LANG_WIDTH_FACTOR.get(str(lang_code or "").lower(), 1.0)
+    items = []
+    for b in _blocks_as_list(blocks):
+        if b.get("isLogo") or not str(b.get("text") or "").strip():
+            continue
+        budget = compute_space_budget(b)
+        text = b["text"]
+        if len(text) > LINE_STRICT_MAX_CHARS:
+            cap = paragraph_capacity(b, budget["allowRatio"])
+            items.append(
+                {
+                    "id": b["id"],
+                    "text": text,
+                    "role": b.get("role"),
+                    "wholeCap": cap["limit"],
+                    "lines": cap["lines"],
+                }
+            )
+        else:
+            cap = (
+                line_capacity(b, budget["allowRatio"], lang_factor)
+                if budget["label"]
+                else None
+            )
+            items.append(
+                {
+                    "id": b["id"],
+                    "text": text,
+                    "role": b.get("role"),
+                    "lineCap": cap["limit"] if cap else None,
+                }
+            )
+    return items
+
+
+def _translate_rows_text(items: list[dict]) -> str:
+    rows = []
+    for it in items:
+        role = f"[{it['role']}] " if it.get("role") else ""
+        line_hint = f"（每行不超过 {it['lineCap']} 字符）" if it.get("lineCap") else ""
+        whole_hint = (
+            f"（整段不超过 {it['wholeCap']} 字符，保持 {it['lines']} 行）"
+            if it.get("wholeCap")
+            else ""
+        )
+        escaped_text = it["text"].replace("\n", "\\n")
+        rows.append(f'{it["id"]}. {role}"{escaped_text}"{line_hint}{whole_hint}')
+    return "\n".join(rows)
+
+
+def build_analyze_variable_map(schema_template: str, user_line: str) -> dict[str, str]:
+    body = (schema_template or "").strip() or load_analyze_prompt()
+    return {
+        "schemaBody": body,
+        "userLine": str(user_line or "").strip(),
+    }
+
+
+def build_space_section(blocks) -> str:
+    items = _translate_items_for_prompt(blocks, "de")
+    if not any(it.get("lineCap") or it.get("wholeCap") for it in items):
+        return ""
+    return (
+        "\n\n【空间适配】部分条目标注了字符上限；译文须压进上限，"
+        "优先行内重新分配，不得丢信息点。"
+    )
+
+
+def build_role_section(items: list[dict]) -> str:
+    roles = sorted({str(it.get("role") or "") for it in items if it.get("role")})
+    if not roles:
+        return ""
+    body = ", ".join(roles)
+    return f"\n\n【按角色调整风格】涉及角色：{body}。"
+
+
+def build_translate_variable_map(
+    blocks,
+    target_lang: str,
+    lang_code: str,
+    lexicon_extra: str = "",
+    retry_json: str = "",
+) -> dict[str, str]:
+    items = _translate_items_for_prompt(blocks, lang_code)
+    rows = _translate_rows_text(items)
+    para = build_paragraph_section(items)
+    retry_vars: dict[str, str] = {}
+    raw_retry = str(retry_json or "").strip()
+    if raw_retry:
+        try:
+            parsed = json.loads(raw_retry)
+            if isinstance(parsed, dict):
+                retry_vars = {str(k): str(v or "") for k, v in parsed.items()}
+        except json.JSONDecodeError:
+            retry_vars = {}
+    return {
+        "targetLang": str(target_lang or "").strip() or "目标语种",
+        "rows": rows,
+        "spaceSection": build_space_section(blocks),
+        "paraSection": para,
+        "roleSection": build_role_section(items),
+        "langSection": format_lang_section(str(target_lang or ""), lang_code),
+        "glossarySection": str(lexicon_extra or ""),
+        "correction": format_retry_section("correction", retry_vars.get("correction", "")),
+        "compactFix": format_retry_section("compactFix", retry_vars.get("compactFix", "")),
+        "mustKeepFix": format_retry_section("mustKeepFix", retry_vars.get("mustKeepFix", "")),
+    }
+
+
+def build_review_variable_map(blocks, target_lang: str) -> dict[str, str]:
+    rows = []
+    for b in _blocks_as_list(blocks):
+        if b.get("isLogo"):
+            continue
+        src = str(b.get("text") or "").strip()
+        tr = str(b.get("translation") or "").strip()
+        if not src or not tr:
+            continue
+        rows.append(f'{b.get("id")}. "{src}" → "{tr}"')
+    return {
+        "targetLang": str(target_lang or "").strip() or "目标语种",
+        "rows": "\n".join(rows) if rows else "(无待审条目)",
+        "nlMark": NL_MARK,
+        "lineStrictMaxChars": str(LINE_STRICT_MAX_CHARS),
+    }
+
+
+def build_generate_variable_map(blocks, target_lang: str, font_dir: str) -> dict[str, str]:
+    bl = _blocks_as_list(blocks)
+    rows = build_image_rows(bl, font_dir)
+    row_text = rows if rows.strip() else '- "(no translatable rows)" -> ""'
+    return {
+        "targetLang": str(target_lang or "").strip() or "target language",
+        "rows": row_text,
+    }
+
+
+def render_prompt_from_catalog(
+    prompt_key: str,
+    variables: dict,
+    template_override: str = "",
+) -> str:
+    tpl = resolve_template(prompt_key, template_override)
+    return render_template(tpl, variables)
+
+
 class VevorGenerativeAnalyzePrompt:
     """Full vision-analyze instruction (same as demo ``ANALYZE_PROMPT``)."""
 
@@ -472,8 +624,9 @@ class VevorGenerativeAnalyzePrompt:
     CATEGORY = "vevor/generative"
 
     def build(self, schema_template: str, user_line: str):
-        body = (schema_template or "").strip() or load_analyze_prompt()
-        return (f"{body}\n\n{user_line.strip()}",)
+        vars_map = build_analyze_variable_map(schema_template, user_line)
+        prompt = render_prompt_from_catalog("analyze", vars_map, "")
+        return (prompt,)
 
 
 class VevorGenerativeParseBlocks:
@@ -570,13 +723,14 @@ class VevorGenerativeTranslatePrompt:
                     {
                         "default": "",
                         "multiline": True,
-                        "placeholder": "留空=内置规则；占位符 {lang} {extra} {rows}",
+                        "placeholder": "留空=catalog translate；覆写整段模板时用 {{targetLang}} {{rows}} 等",
                     },
                 ),
             },
             "optional": {
                 "lang_code": (["de", "fr", "it", "es"],),
                 "lexicon_extra": ("STRING", {"default": "", "forceInput": True}),
+                "retry_variables_json": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -592,50 +746,16 @@ class VevorGenerativeTranslatePrompt:
         rules_template: str = "",
         lang_code: str = "de",
         lexicon_extra: str = "",
+        retry_variables_json: str = "",
     ):
-        lang_factor = LANG_WIDTH_FACTOR.get(str(lang_code or "").lower(), 1.0)
-        items = []
-        for b in _blocks_as_list(blocks):
-            if b.get("isLogo") or not str(b.get("text") or "").strip():
-                continue
-            budget = compute_space_budget(b)
-            text = b["text"]
-            if len(text) > LINE_STRICT_MAX_CHARS:
-                cap = paragraph_capacity(b, budget["allowRatio"])
-                items.append(
-                    {
-                        "id": b["id"],
-                        "text": text,
-                        "role": b.get("role"),
-                        "wholeCap": cap["limit"],
-                        "lines": cap["lines"],
-                    }
-                )
-            else:
-                cap = (
-                    line_capacity(b, budget["allowRatio"], lang_factor)
-                    if budget["label"]
-                    else None
-                )
-                items.append(
-                    {
-                        "id": b["id"],
-                        "text": text,
-                        "role": b.get("role"),
-                        "lineCap": cap["limit"] if cap else None,
-                    }
-                )
-        rows = []
-        for it in items:
-            role = f"[{it['role']}] " if it.get("role") else ""
-            line_hint = f"（每行不超过 {it['lineCap']} 字符）" if it.get("lineCap") else ""
-            whole_hint = (
-                f"（整段不超过 {it['wholeCap']} 字符，保持 {it['lines']} 行）" if it.get("wholeCap") else ""
-            )
-            escaped_text = it["text"].replace("\n", "\\n")
-            rows.append(f'{it["id"]}. {role}"{escaped_text}"{line_hint}{whole_hint}')
-        extra = build_paragraph_section(items) + str(lexicon_extra or "")
-        prompt = build_translate_prompt("\n".join(rows), target_lang, extra, rules_template)
+        vars_map = build_translate_variable_map(
+            blocks,
+            target_lang,
+            lang_code,
+            lexicon_extra=str(lexicon_extra or ""),
+            retry_json=str(retry_variables_json or ""),
+        )
+        prompt = render_prompt_from_catalog("translate", vars_map, rules_template)
         return (prompt,)
 
 
@@ -795,10 +915,8 @@ class VevorGenerativeGenerateBundle:
     CATEGORY = "vevor/generative"
 
     def build(self, blocks, target_lang: str, font_dir: str, image_prompt_template: str = ""):
-        bl = _blocks_as_list(blocks)
-        rows = build_image_rows(bl, font_dir)
-        row_text = rows if rows.strip() else '- "(no translatable rows)" -> ""'
-        prompt = build_image_prompt(row_text, image_prompt_template, target_lang)
+        vars_map = build_generate_variable_map(blocks, target_lang, font_dir)
+        prompt = render_prompt_from_catalog("image", vars_map, image_prompt_template)
         return (prompt,)
 
 
@@ -845,6 +963,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorGenerativeApplyTranslations": "Generative · Apply Translations",
     "VevorGenerativeMergeTranslationOverrides": "Generative · Merge Translation Overrides",
     "VevorGenerativeTranslationReport": "Generative · Translation Report",
-    "VevorGenerativeGenerateBundle": "Generative · Generate Prompt (ApiYi)",
+    "VevorGenerativeGenerateBundle": "Generative · Generate Prompt (Sunburst)",
     "VevorGenerativeGlyphCard": "Generative · Glyph Reference Card",
 }

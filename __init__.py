@@ -87,6 +87,16 @@ except Exception:  # noqa: BLE001
     _GENERATIVE_DISPLAY_MAPPINGS = {}
 
 try:
+    _generative_prompt_nodes = _load_sibling(
+        "vevor_mask_union_generative_prompt_nodes",
+        "generative_prompt_nodes.py",
+    )
+    _GENERATIVE_CLASS_MAPPINGS.update(_generative_prompt_nodes.NODE_CLASS_MAPPINGS)
+    _GENERATIVE_DISPLAY_MAPPINGS.update(_generative_prompt_nodes.NODE_DISPLAY_NAME_MAPPINGS)
+except Exception:  # noqa: BLE001
+    traceback.print_exc()
+
+try:
     _generative_apiyi = _load_sibling("vevor_mask_union_generative_apiyi", "generative_apiyi.py")
     _GENERATIVE_CLASS_MAPPINGS.update(_generative_apiyi.NODE_CLASS_MAPPINGS)
     _GENERATIVE_DISPLAY_MAPPINGS.update(_generative_apiyi.NODE_DISPLAY_NAME_MAPPINGS)
