@@ -322,10 +322,14 @@ def _safe_tag_of(block: dict) -> str:
     bb = block.get("bbox")
     if not cb or not bb:
         return ""
-    bx, _, bw = bb
-    cx, _, cw = cb
+    if len(bb) < 4 or len(cb) < 4:
+        return ""
+    bx = float(bb[0])
+    bw = float(bb[2])
+    cx = float(cb[0])
+    cw = float(cb[2])
     left = max(0.0, bx - cx)
-    right = max(0.0, cx + cw - (bx + bw))
+    right = max(0.0, (cx + cw) - (bx + bw))
     return f"[safe:{_pct(left)}/{_pct(right)}] "
 
 
