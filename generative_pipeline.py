@@ -318,18 +318,14 @@ def _tag_of(name: str, box: list[float] | None) -> str:
 
 
 def _safe_tag_of(block: dict) -> str:
-    cb = block.get("containerBbox")
-    bb = block.get("bbox")
+    cb = _as_box(block.get("containerBbox"))
+    bb = _as_box(block.get("bbox"))
     if not cb or not bb:
         return ""
-    if len(bb) < 4 or len(cb) < 4:
-        return ""
-    bx = float(bb[0])
-    bw = float(bb[2])
-    cx = float(cb[0])
-    cw = float(cb[2])
+    bx, _, bw, _ = bb
+    cx, _, cw, _ = cb
     left = max(0.0, bx - cx)
-    right = max(0.0, (cx + cw) - (bx + bw))
+    right = max(0.0, cx + cw - (bx + bw))
     return f"[safe:{_pct(left)}/{_pct(right)}] "
 
 
