@@ -59,14 +59,12 @@ class VevorGenerativePromptTemplate:
     RETURN_NAMES = ("prompt",)
     FUNCTION = "render"
     CATEGORY = "vevor/generative"
-    OUTPUT_NODE = True
 
     def render(self, prompt_skeleton: str, variables_json: str = ""):
         template = str(prompt_skeleton or "").strip()
         variables = parse_variables_json(variables_json or "{}")
         prompt = render_template(template, variables)
-        preview = prompt if len(prompt) <= 12000 else prompt[:12000] + "\n…(truncated)"
-        return {"ui": {"text": [preview]}, "result": (prompt,)}
+        return (prompt,)
 
 
 class VevorGenerativeVariablesJsonPatch:
@@ -118,29 +116,6 @@ class VevorGenerativeVariablesJsonPatch:
             if val is not None and str(val).strip():
                 data[key] = val if isinstance(val, str) else str(val)
         return (_vars_to_json(data),)
-
-
-class VevorGenerativeShowPrompt:
-    """OUTPUT 节点：展示渲染后的 prompt（与 TranslationReport 同 ui.text 机制）。"""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "prompt": ("STRING", {"default": "", "forceInput": True}),
-            }
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("prompt",)
-    FUNCTION = "show"
-    CATEGORY = "vevor/generative"
-    OUTPUT_NODE = True
-
-    def show(self, prompt: str):
-        text = str(prompt or "")
-        preview = text if len(text) <= 16000 else text[:16000] + "\n…(truncated)"
-        return {"ui": {"text": [preview]}, "result": (text,)}
 
 
 class VevorGenerativeSpaceBudget:
@@ -280,7 +255,6 @@ class VevorGenerativeApplyReview:
 NODE_CLASS_MAPPINGS = {
     "VevorGenerativePromptTemplate": VevorGenerativePromptTemplate,
     "VevorGenerativeVariablesJsonPatch": VevorGenerativeVariablesJsonPatch,
-    "VevorGenerativeShowPrompt": VevorGenerativeShowPrompt,
     "VevorGenerativeSpaceBudget": VevorGenerativeSpaceBudget,
     "VevorGenerativeTranslateVars": VevorGenerativeTranslateVars,
     "VevorGenerativeGenerateVars": VevorGenerativeGenerateVars,
@@ -291,7 +265,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorGenerativePromptTemplate": "Generative · Prompt Template",
     "VevorGenerativeVariablesJsonPatch": "Generative · Variables JSON Patch",
-    "VevorGenerativeShowPrompt": "Generative · Show Rendered Prompt",
     "VevorGenerativeSpaceBudget": "Generative · Space Budget",
     "VevorGenerativeTranslateVars": "Generative · Translate Variables",
     "VevorGenerativeGenerateVars": "Generative · Generate Variables",
