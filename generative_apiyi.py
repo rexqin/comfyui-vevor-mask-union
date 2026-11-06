@@ -153,20 +153,21 @@ class VevorApiYiImageEdit:
     CATEGORY = "vevor/generative"
 
     def edit(self, image, prompt: str, api_key: str, model: str, quality: str = "high"):
+        """HTTP edits only — input IMAGE should already be canvas-sized (e.g. 1hew resize)."""
         key = str(api_key or "").strip()
         if not key or key.startswith("REPLACE_"):
-            raise RuntimeError("APIYI API key 未配置（节点 api_key 或环境变量 APIYI_API_KEY）")
-        key = os.environ.get("APIYI_API_KEY", key)
+            env = os.environ.get("APIYI_API_KEY", "").strip()
+            if not env:
+                raise RuntimeError("APIYI API key 未配置（节点 api_key 或环境变量 APIYI_API_KEY）")
+            key = env
 
         pil = _tensor_to_pil(image)
-        src_w, src_h = pil.size
-        if src_w < 1 or src_h < 1:
+        tw, th = pil.size
+        if tw < 1 or th < 1:
             raise RuntimeError("输入图像尺寸无效")
 
-        tw, th = api_yi_size_for(src_w, src_h)
-        resized = pil.resize((tw, th), Image.Resampling.LANCZOS)
         buf = io.BytesIO()
-        resized.save(buf, format="PNG")
+        pil.save(buf, format="PNG")
         canvas_png = buf.getvalue()
 
         out_png = _call_apiyi_edits(
@@ -180,8 +181,6 @@ class VevorApiYiImageEdit:
         )
 
         out_img = Image.open(io.BytesIO(out_png)).convert("RGB")
-        if out_img.size != (src_w, src_h):
-            out_img = out_img.resize((src_w, src_h), Image.Resampling.LANCZOS)
         return (_pil_to_tensor(out_img),)
 
 
