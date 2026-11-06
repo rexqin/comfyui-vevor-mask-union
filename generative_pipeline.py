@@ -8,23 +8,16 @@ import re
 import sys
 
 import numpy as np
-import torch
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ImageFont
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from generative_prompts import (  # noqa: E402
-    build_image_prompt,
-    build_paragraph_section,
-    load_analyze_prompt,
-)
+from generative_prompts import build_paragraph_section  # noqa: E402
 from generative_template import (  # noqa: E402
     format_lang_section,
     format_retry_section,
-    render_template,
-    resolve_template,
 )
 
 # Ported from demo/lib-text.mjs
@@ -38,7 +31,6 @@ LENGTH_SLACK_RATIO = 0.03
 LENGTH_SLACK_MIN = 1
 LINE_STRICT_MAX_CHARS = 120
 REFLOW_MIN_CHARS = 60
-GLYPH_CHARS_PER_ROW = 9
 
 LANG_WIDTH_FACTOR: dict[str, float] = {
     "de": 1.08,
@@ -390,51 +382,6 @@ def build_image_rows(blocks: list[dict], font_dir: str) -> str:
     return "\n".join(rows)
 
 
-def build_glyph_chars(blocks: list[dict]) -> str:
-    text = "".join(str(b.get("translation") or "") for b in blocks if is_translatable(b))
-    uniq = sorted({c for c in text if c.strip()}, key=lambda c: c)
-    accent = re.compile(r"[áéíóúñüÁÉÍÓÚÑÜàâäçèêëîïôöùûÿœæß]")
-
-    def is_accent(c: str) -> bool:
-        return bool(accent.search(c))
-
-    groups = [
-        "".join(sorted(c for c in uniq if c.isupper() and not is_accent(c))),
-        "".join(sorted(c for c in uniq if c.islower() and not is_accent(c))),
-        "".join(sorted(c for c in uniq if c.isdigit()))
-        + "".join(c for c in uniq if not (c.isalpha() or c.isdigit())),
-        "".join(sorted(c for c in uniq if is_accent(c))),
-    ]
-    groups = [g for g in groups if g]
-    rows: list[str] = []
-    for g in groups:
-        for i in range(0, len(g), GLYPH_CHARS_PER_ROW):
-            rows.append(g[i : i + GLYPH_CHARS_PER_ROW])
-    return "\n".join(rows)
-
-
-def render_glyph_card(font_dir: str, chars: str, font_size: int = 220) -> np.ndarray:
-    font = _load_font(font_dir, font_size)
-    lines = [ln.rstrip() for ln in str(chars or "").split("\n") if ln.strip()]
-    if not lines:
-        lines = ["C4%"]
-    pad = round(font_size * 0.09)
-    line_h = round(font_size * 1.25)
-
-    def line_width(line: str) -> float:
-        return float(font.getlength(line)) if hasattr(font, "getlength") else len(line) * font_size * 0.55
-
-    w = int(max(line_width(ln) for ln in lines) + pad * 2)
-    h = line_h * len(lines) + pad
-    img = Image.new("RGB", (max(w, 32), max(h, 32)), color=(0x14, 0x14, 0x14))
-    draw = ImageDraw.Draw(img)
-    for i, line in enumerate(lines):
-        y = pad + i * line_h
-        draw.text((pad, y), line, fill=(255, 255, 255), font=font)
-    arr = np.array(img).astype(np.float32) / 255.0
-    return arr
-
-
 def _blocks_as_list(blocks) -> list[dict]:
     if blocks is None:
         return []
@@ -495,14 +442,6 @@ def _translate_rows_text(items: list[dict]) -> str:
         escaped_text = it["text"].replace("\n", "\\n")
         rows.append(f'{it["id"]}. {role}"{escaped_text}"{line_hint}{whole_hint}')
     return "\n".join(rows)
-
-
-def build_analyze_variable_map(schema_template: str, user_line: str) -> dict[str, str]:
-    body = (schema_template or "").strip() or load_analyze_prompt()
-    return {
-        "schemaBody": body,
-        "userLine": str(user_line or "").strip(),
-    }
 
 
 def build_space_section(blocks) -> str:
@@ -584,51 +523,6 @@ def build_generate_variable_map(blocks, target_lang: str, font_dir: str) -> dict
     }
 
 
-def render_prompt_from_catalog(
-    prompt_key: str,
-    variables: dict,
-    template_override: str = "",
-) -> str:
-    tpl = resolve_template(prompt_key, template_override)
-    return render_template(tpl, variables)
-
-
-class VevorGenerativeAnalyzePrompt:
-    """Full vision-analyze instruction (same as demo ``ANALYZE_PROMPT``)."""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "schema_template": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "placeholder": "留空=包内 generative_analyze_prompt.txt；可覆写版面 JSON 字段说明",
-                    },
-                ),
-                "user_line": (
-                    "STRING",
-                    {
-                        "default": "识别这张图上所有可见文字块，只输出 JSON 数组。",
-                        "multiline": False,
-                    },
-                ),
-            }
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("prompt",)
-    FUNCTION = "build"
-    CATEGORY = "vevor/generative"
-
-    def build(self, schema_template: str, user_line: str):
-        vars_map = build_analyze_variable_map(schema_template, user_line)
-        prompt = render_prompt_from_catalog("analyze", vars_map, "")
-        return (prompt,)
-
-
 class VevorGenerativeParseBlocks:
     """Parse LLM JSON array into normalized layout blocks."""
 
@@ -707,56 +601,6 @@ class VevorGenerativeTranslateLexicon:
             "\n\n【术语表（以下词条必须严格采用指定译法，不得改动）】\n" + body
         )
         return (section,)
-
-
-class VevorGenerativeTranslatePrompt:
-    """Build translation prompt with spatial budget hints (demo ``lib-api``)."""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "blocks": ("JSON", {"forceInput": True}),
-                "target_lang": ("STRING", {"default": "德语"}),
-                "rules_template": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "placeholder": "留空=catalog translate；覆写整段模板时用 {{targetLang}} {{rows}} 等",
-                    },
-                ),
-            },
-            "optional": {
-                "lang_code": (["de", "fr", "it", "es"],),
-                "lexicon_extra": ("STRING", {"default": "", "forceInput": True}),
-                "retry_variables_json": ("STRING", {"default": "", "forceInput": True}),
-            },
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("prompt",)
-    FUNCTION = "build"
-    CATEGORY = "vevor/generative"
-
-    def build(
-        self,
-        blocks,
-        target_lang: str,
-        rules_template: str = "",
-        lang_code: str = "de",
-        lexicon_extra: str = "",
-        retry_variables_json: str = "",
-    ):
-        vars_map = build_translate_variable_map(
-            blocks,
-            target_lang,
-            lang_code,
-            lexicon_extra=str(lexicon_extra or ""),
-            retry_json=str(retry_variables_json or ""),
-        )
-        prompt = render_prompt_from_catalog("translate", vars_map, rules_template)
-        return (prompt,)
 
 
 class VevorGenerativeApplyTranslations:
@@ -888,81 +732,18 @@ class VevorGenerativeTranslationReport:
         return {"ui": {"text": [report]}, "result": (report,)}
 
 
-class VevorGenerativeGenerateBundle:
-    """Build ApiYi Sunburst image-edit prompt (design-agent ``buildTextMapPrompt``)."""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "blocks": ("JSON", {"forceInput": True}),
-                "target_lang": ("STRING", {"default": "德语"}),
-                "font_dir": ("STRING", {"default": "fonts"}),
-                "image_prompt_template": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "placeholder": "留空=内置 Sunburst 模板；占位 {{targetLang}} {{rows}}",
-                    },
-                ),
-            }
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("generate_prompt",)
-    FUNCTION = "build"
-    CATEGORY = "vevor/generative"
-
-    def build(self, blocks, target_lang: str, font_dir: str, image_prompt_template: str = ""):
-        vars_map = build_generate_variable_map(blocks, target_lang, font_dir)
-        prompt = render_prompt_from_catalog("image", vars_map, image_prompt_template)
-        return (prompt,)
-
-
-class VevorGenerativeGlyphCard:
-    """Render black reference card (demo ``lib-image.renderGlyphCard``)."""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "glyph_chars": ("STRING", {"forceInput": True}),
-                "font_dir": ("STRING", {"default": "fonts"}),
-                "font_size": ("INT", {"default": 220, "min": 32, "max": 512}),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
-    FUNCTION = "render"
-    CATEGORY = "vevor/generative"
-
-    def render(self, glyph_chars: str, font_dir: str, font_size: int):
-        arr = render_glyph_card(font_dir, glyph_chars, font_size)
-        return (torch.from_numpy(arr).unsqueeze(0),)
-
-
 NODE_CLASS_MAPPINGS = {
-    "VevorGenerativeAnalyzePrompt": VevorGenerativeAnalyzePrompt,
     "VevorGenerativeParseBlocks": VevorGenerativeParseBlocks,
     "VevorGenerativeTranslateLexicon": VevorGenerativeTranslateLexicon,
-    "VevorGenerativeTranslatePrompt": VevorGenerativeTranslatePrompt,
     "VevorGenerativeApplyTranslations": VevorGenerativeApplyTranslations,
     "VevorGenerativeMergeTranslationOverrides": VevorGenerativeMergeTranslationOverrides,
     "VevorGenerativeTranslationReport": VevorGenerativeTranslationReport,
-    "VevorGenerativeGenerateBundle": VevorGenerativeGenerateBundle,
-    "VevorGenerativeGlyphCard": VevorGenerativeGlyphCard,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "VevorGenerativeAnalyzePrompt": "Generative · Analyze Prompt",
     "VevorGenerativeParseBlocks": "Generative · Parse Blocks JSON",
     "VevorGenerativeTranslateLexicon": "Generative · Translate Lexicon",
-    "VevorGenerativeTranslatePrompt": "Generative · Translate Prompt",
     "VevorGenerativeApplyTranslations": "Generative · Apply Translations",
     "VevorGenerativeMergeTranslationOverrides": "Generative · Merge Translation Overrides",
     "VevorGenerativeTranslationReport": "Generative · Translation Report",
-    "VevorGenerativeGenerateBundle": "Generative · Generate Prompt (Sunburst)",
-    "VevorGenerativeGlyphCard": "Generative · Glyph Reference Card",
 }

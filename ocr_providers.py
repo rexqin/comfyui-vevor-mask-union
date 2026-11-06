@@ -147,7 +147,6 @@ def _parse_vlm_json(text):
 
 
 _PADDLE_ENGINE = None
-_SURYA_BUNDLE = None
 
 VL_OCR_JSON_PROMPT = (
     "List every visible text region in this advertisement image as a JSON array. "
@@ -209,71 +208,6 @@ class VevorOcrPaddle:
             score = float(rec[1]) if isinstance(rec, (list, tuple)) and len(rec) > 1 else 0.9
             x1, y1, x2, y2 = _box_from_quad(quad)
             entries.append((str(text).strip(), score, x1, y1, x2, y2))
-        payload, mask = _pack_ocr_output(entries, width, height)
-        return (payload, mask)
-
-
-class VevorOcrSurya:
-    DESCRIPTION = (
-        "Run Surya OCR locally; labelme JSON + MASK batch. "
-        "Requires: pip install surya-ocr"
-    )
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-                "lang": (["en", "de", "fr", "es", "it", "zh", "ja"], {"default": "en"}),
-            }
-        }
-
-    RETURN_TYPES = ("JSON", "MASK")
-    RETURN_NAMES = ("ocr_json", "mask")
-    FUNCTION = "run"
-    CATEGORY = "vevor/ocr"
-
-    def run(self, image, lang):
-        try:
-            from surya.detection import batch_text_detection
-            from surya.model.detection.model import load_model as load_det_model
-            from surya.model.detection.processor import load_processor as load_det_processor
-            from surya.model.recognition.model import load_model as load_rec_model
-            from surya.model.recognition.processor import load_processor as load_rec_processor
-            from surya.recognition import batch_recognition
-        except ImportError as exc:
-            raise RuntimeError(
-                "Surya not installed. On the ComfyUI server: pip install surya-ocr"
-            ) from exc
-
-        if Image is None:
-            raise RuntimeError("PIL is required for Surya OCR")
-
-        rgb = _frame_rgb_uint8(image)
-        height, width = rgb.shape[0], rgb.shape[1]
-        pil = Image.fromarray(rgb)
-
-        global _SURYA_BUNDLE
-        if _SURYA_BUNDLE is None:
-            _SURYA_BUNDLE = (
-                load_det_model(),
-                load_det_processor(),
-                load_rec_model(),
-                load_rec_processor(),
-            )
-        det_model, det_processor, rec_model, rec_processor = _SURYA_BUNDLE
-
-        det = batch_text_detection([pil], det_model, det_processor)[0]
-        rec = batch_recognition([pil], [det], rec_model, rec_processor, langs=[[lang]])[0]
-
-        entries = []
-        for line in rec.text_lines:
-            text = str(line.text or "").strip()
-            if not text:
-                continue
-            x1, y1, x2, y2 = line.bbox
-            score = float(getattr(line, "confidence", 0.9) or 0.9)
-            entries.append((text, score, x1, y1, x2, y2))
         payload, mask = _pack_ocr_output(entries, width, height)
         return (payload, mask)
 

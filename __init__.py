@@ -96,24 +96,6 @@ try:
 except Exception:  # noqa: BLE001
     traceback.print_exc()
 
-try:
-    _generative_apiyi = _load_sibling("vevor_mask_union_generative_apiyi", "generative_apiyi.py")
-    _GENERATIVE_CLASS_MAPPINGS.update(_generative_apiyi.NODE_CLASS_MAPPINGS)
-    _GENERATIVE_DISPLAY_MAPPINGS.update(_generative_apiyi.NODE_DISPLAY_NAME_MAPPINGS)
-except Exception:  # noqa: BLE001
-    traceback.print_exc()
-
-try:
-    _generative_partner = _load_sibling(
-        "vevor_mask_union_generative_partner_image",
-        "generative_partner_image.py",
-    )
-    _GENERATIVE_CLASS_MAPPINGS.update(_generative_partner.NODE_CLASS_MAPPINGS)
-    _GENERATIVE_DISPLAY_MAPPINGS.update(_generative_partner.NODE_DISPLAY_NAME_MAPPINGS)
-except Exception:  # noqa: BLE001
-    traceback.print_exc()
-
-
 class VevorMaskBatchUnion:
     """Fold a MASK batch (one frame per region) into a single union mask."""
 
