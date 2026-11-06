@@ -35,6 +35,35 @@ LINE_STRICT_MAX_CHARS = 120
 REFLOW_MIN_CHARS = 60
 GLYPH_CHARS_PER_ROW = 9
 
+LANG_WIDTH_FACTOR: dict[str, float] = {
+    "de": 1.08,
+    "nl": 1.06,
+    "fr": 1.05,
+    "es": 1.02,
+    "it": 1.02,
+    "pt": 1.02,
+    "pl": 1.06,
+}
+
+ALIGN_TAG = {"left": "left-aligned", "center": "centered", "right": "right-aligned"}
+
+COLOR_NAMES: list[tuple[str, tuple[int, int, int]]] = [
+    ("white", (255, 255, 255)),
+    ("black", (0, 0, 0)),
+    ("dark gray", (60, 60, 60)),
+    ("gray", (128, 128, 128)),
+    ("light gray", (205, 205, 205)),
+    ("orange", (245, 90, 25)),
+    ("red", (215, 45, 45)),
+    ("yellow", (250, 200, 20)),
+    ("green", (45, 160, 75)),
+    ("blue", (45, 95, 210)),
+    ("brown", (125, 85, 45)),
+    ("beige", (235, 220, 190)),
+    ("pink", (240, 130, 165)),
+    ("purple", (130, 70, 180)),
+]
+
 _FONT_CACHE: dict[tuple[str, int], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
 def _resolve_font_path(font_dir: str) -> str | None:
     here = os.path.dirname(os.path.abspath(__file__))
@@ -166,10 +195,10 @@ def compute_space_budget(block: dict) -> dict:
     return {"allowRatio": allow_ratio, "label": allow_ratio < LIMIT_LABEL_THRESHOLD}
 
 
-def line_capacity(block: dict, allow_ratio: float) -> dict:
+def line_capacity(block: dict, allow_ratio: float, lang_factor: float = 1.0) -> dict:
     lines = [ln.strip() for ln in block["text"].split("\n") if ln.strip()]
     max_len = max(1, max((len(ln) for ln in lines), default=1))
-    limit = max(max_len, round(max_len * (1 + allow_ratio)))
+    limit = max(1, round(max(max_len, round(max_len * (1 + allow_ratio))) / max(lang_factor, 0.01)))
     slack = max(LENGTH_SLACK_MIN, round(limit * LENGTH_SLACK_RATIO))
     return {"limit": limit, "pass": limit + slack}
 
@@ -264,20 +293,95 @@ def is_translatable(block: dict) -> bool:
     )
 
 
+def _pct(n: float) -> str:
+    return f"{n * 100:.1f}%"
+
+
+def _color_name_of(text_color: str) -> str | None:
+    m = re.search(r"#?([0-9a-f]{6})", str(text_color or "").strip(), re.I)
+    if not m:
+        return None
+    v = int(m.group(1), 16)
+    r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
+    best, best_d = None, float("inf")
+    for name, (cr, cg, cb) in COLOR_NAMES:
+        d = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+        if d < best_d:
+            best_d, best = d, name
+    return best
+
+
+def _tag_of(name: str, box: list[float] | None) -> str:
+    if not box:
+        return ""
+    return f"[{name}:{','.join(_pct(v) for v in box)}] "
+
+
+def _safe_tag_of(block: dict) -> str:
+    cb = block.get("containerBbox")
+    bb = block.get("bbox")
+    if not cb or not bb:
+        return ""
+    bx, _, bw = bb
+    cx, _, cw = cb
+    left = max(0.0, bx - cx)
+    right = max(0.0, cx + cw - (bx + bw))
+    return f"[safe:{_pct(left)}/{_pct(right)}] "
+
+
+def _group_key_of(block: dict) -> str:
+    return "|".join(
+        [
+            str(block.get("role") or ""),
+            _color_name_of(block.get("textColor") or "") or "-",
+            str(block.get("containerColor") or "-"),
+            str(block.get("align") or "left"),
+            str(round(float(block.get("sizePct") or 0))),
+        ]
+    )
+
+
+def _lines_of(text: str) -> int:
+    return len([ln for ln in text.split("\n") if ln.strip()]) or 1
+
+
 def build_image_rows(blocks: list[dict], font_dir: str) -> str:
+    targets = [b for b in blocks if is_translatable(b)]
+    group_sizes: dict[str, int] = {}
+    for b in targets:
+        key = _group_key_of(b)
+        group_sizes[key] = group_sizes.get(key, 0) + 1
+    group_nos: dict[str, int] = {}
+    next_group_no = 0
+
     rows = []
-    for b in blocks:
-        if not is_translatable(b):
-            continue
-        size = round(float(b.get("sizePct") or 5) * 10) / 10
-        tags = [f"[align:{b.get('align', 'left')}]", f"[size:{size}%]"]
-        if b.get("bold"):
-            tags.append("[bold]")
+    for b in targets:
+        align = str(b.get("align") or "left")
+        align_tag = f"[{ALIGN_TAG.get(align, align)}] " if align in ALIGN_TAG else f"[align:{align}] "
+        name = _color_name_of(b.get("textColor") or "")
+        color_tag = f"[{name}] " if name else ""
+        bold_tag = "[bold] " if b.get("bold") else ""
+        max_lines = b.get("maxLines") or _lines_of(b["text"])
+        lines_tag = f"[lines:{max_lines}] "
+        box_tag = _tag_of("box", b.get("bbox"))
+        panel_tag = _tag_of("panel", b.get("containerBbox"))
+        safe_tag = _safe_tag_of(b)
+        key = _group_key_of(b)
+        group_tag = ""
+        if group_sizes.get(key, 0) >= 2:
+            if key not in group_nos:
+                next_group_no += 1
+                group_nos[key] = next_group_no
+            group_tag = f"[group:g{group_nos[key]}] "
+
         wrapped = wrap_target(b, font_dir)
         pair_from, pair_to = blank_unchanged_lines(b["text"], wrapped)
         from_s = pair_from.replace("\n", NL_MARK)
         to_s = pair_to.replace("\n", NL_MARK)
-        rows.append(f'"{from_s}" {" ".join(tags)} -> "{to_s}"')
+        rows.append(
+            f"- {align_tag}{color_tag}{bold_tag}{lines_tag}{box_tag}{panel_tag}{safe_tag}{group_tag}"
+            f'"{from_s}" -> "{to_s}"'
+        )
     return "\n".join(rows)
 
 
@@ -388,6 +492,70 @@ class VevorGenerativeParseBlocks:
         return (normalize_blocks(analyze_response),)
 
 
+class VevorGenerativeTranslateLexicon:
+    """Glossary section for translate prompt (design-agent ``glossary.ts``)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "blocks": ("JSON", {"forceInput": True}),
+                "lang_code": (["de", "fr", "it", "es"],),
+                "glossary_json": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "placeholder": '可选：[{"from":"…","lang":"de|*","to":"…"}]',
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("lexicon_extra",)
+    FUNCTION = "build"
+    CATEGORY = "vevor/generative"
+
+    def build(self, blocks, lang_code: str, glossary_json: str = ""):
+        raw = str(glossary_json or "").strip()
+        entries: list[dict] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    entries = [e for e in parsed if isinstance(e, dict)]
+            except json.JSONDecodeError:
+                entries = []
+        items = [
+            {"text": str(b.get("text") or "")}
+            for b in _blocks_as_list(blocks)
+            if not b.get("isLogo") and str(b.get("text") or "").strip()
+        ]
+        if not items or not entries:
+            return ("",)
+        code = str(lang_code or "").lower()
+        hits = []
+        for e in entries:
+            lang = str(e.get("lang") or "*").strip().lower()
+            if lang != "*" and lang != code:
+                continue
+            from_text = str(e.get("from") or "").strip()
+            to_text = str(e.get("to") or "").strip()
+            if not from_text or not to_text:
+                continue
+            needle = from_text.lower()
+            if any(needle in str(it.get("text") or "").lower() for it in items):
+                hits.append((from_text, to_text))
+        if not hits:
+            return ("",)
+        body = "\n".join(f'- "{a}" 必须译为 "{b}"' for a, b in hits)
+        section = (
+            "\n\n【术语表（以下词条必须严格采用指定译法，不得改动）】\n" + body
+        )
+        return (section,)
+
+
 class VevorGenerativeTranslatePrompt:
     """Build translation prompt with spatial budget hints (demo ``lib-api``)."""
 
@@ -405,7 +573,11 @@ class VevorGenerativeTranslatePrompt:
                         "placeholder": "留空=内置规则；占位符 {lang} {extra} {rows}",
                     },
                 ),
-            }
+            },
+            "optional": {
+                "lang_code": (["de", "fr", "it", "es"],),
+                "lexicon_extra": ("STRING", {"default": "", "forceInput": True}),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -413,7 +585,15 @@ class VevorGenerativeTranslatePrompt:
     FUNCTION = "build"
     CATEGORY = "vevor/generative"
 
-    def build(self, blocks, target_lang: str, rules_template: str = ""):
+    def build(
+        self,
+        blocks,
+        target_lang: str,
+        rules_template: str = "",
+        lang_code: str = "de",
+        lexicon_extra: str = "",
+    ):
+        lang_factor = LANG_WIDTH_FACTOR.get(str(lang_code or "").lower(), 1.0)
         items = []
         for b in _blocks_as_list(blocks):
             if b.get("isLogo") or not str(b.get("text") or "").strip():
@@ -432,7 +612,11 @@ class VevorGenerativeTranslatePrompt:
                     }
                 )
             else:
-                cap = line_capacity(b, budget["allowRatio"]) if budget["label"] else None
+                cap = (
+                    line_capacity(b, budget["allowRatio"], lang_factor)
+                    if budget["label"]
+                    else None
+                )
                 items.append(
                     {
                         "id": b["id"],
@@ -450,7 +634,7 @@ class VevorGenerativeTranslatePrompt:
             )
             escaped_text = it["text"].replace("\n", "\\n")
             rows.append(f'{it["id"]}. {role}"{escaped_text}"{line_hint}{whole_hint}')
-        extra = build_paragraph_section(items)
+        extra = build_paragraph_section(items) + str(lexicon_extra or "")
         prompt = build_translate_prompt("\n".join(rows), target_lang, extra, rules_template)
         return (prompt,)
 
@@ -585,37 +769,37 @@ class VevorGenerativeTranslationReport:
 
 
 class VevorGenerativeGenerateBundle:
-    """Build Qwen edit prompt + glyph-card character set."""
+    """Build ApiYi Sunburst image-edit prompt (design-agent ``buildTextMapPrompt``)."""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "blocks": ("JSON", {"forceInput": True}),
+                "target_lang": ("STRING", {"default": "德语"}),
                 "font_dir": ("STRING", {"default": "fonts"}),
                 "image_prompt_template": (
                     "STRING",
                     {
                         "default": "",
                         "multiline": True,
-                        "placeholder": "留空=内置 Qwen 指令；必须含 {rows} 插入动态换字行",
+                        "placeholder": "留空=内置 Sunburst 模板；占位 {{targetLang}} {{rows}}",
                     },
                 ),
             }
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("generate_prompt", "glyph_chars")
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("generate_prompt",)
     FUNCTION = "build"
     CATEGORY = "vevor/generative"
 
-    def build(self, blocks, font_dir: str, image_prompt_template: str = ""):
+    def build(self, blocks, target_lang: str, font_dir: str, image_prompt_template: str = ""):
         bl = _blocks_as_list(blocks)
         rows = build_image_rows(bl, font_dir)
-        row_text = rows if rows.strip() else '"(no translatable rows)" -> ""'
-        prompt = build_image_prompt(row_text, image_prompt_template)
-        glyphs = build_glyph_chars(bl)
-        return (prompt, glyphs)
+        row_text = rows if rows.strip() else '- "(no translatable rows)" -> ""'
+        prompt = build_image_prompt(row_text, image_prompt_template, target_lang)
+        return (prompt,)
 
 
 class VevorGenerativeGlyphCard:
@@ -644,6 +828,7 @@ class VevorGenerativeGlyphCard:
 NODE_CLASS_MAPPINGS = {
     "VevorGenerativeAnalyzePrompt": VevorGenerativeAnalyzePrompt,
     "VevorGenerativeParseBlocks": VevorGenerativeParseBlocks,
+    "VevorGenerativeTranslateLexicon": VevorGenerativeTranslateLexicon,
     "VevorGenerativeTranslatePrompt": VevorGenerativeTranslatePrompt,
     "VevorGenerativeApplyTranslations": VevorGenerativeApplyTranslations,
     "VevorGenerativeMergeTranslationOverrides": VevorGenerativeMergeTranslationOverrides,
@@ -655,10 +840,11 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorGenerativeAnalyzePrompt": "Generative · Analyze Prompt",
     "VevorGenerativeParseBlocks": "Generative · Parse Blocks JSON",
+    "VevorGenerativeTranslateLexicon": "Generative · Translate Lexicon",
     "VevorGenerativeTranslatePrompt": "Generative · Translate Prompt",
     "VevorGenerativeApplyTranslations": "Generative · Apply Translations",
     "VevorGenerativeMergeTranslationOverrides": "Generative · Merge Translation Overrides",
     "VevorGenerativeTranslationReport": "Generative · Translation Report",
-    "VevorGenerativeGenerateBundle": "Generative · Generate Prompt + Glyphs",
+    "VevorGenerativeGenerateBundle": "Generative · Generate Prompt (ApiYi)",
     "VevorGenerativeGlyphCard": "Generative · Glyph Reference Card",
 }

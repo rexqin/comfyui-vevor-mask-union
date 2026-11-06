@@ -90,30 +90,55 @@ def build_paragraph_section(items) -> str:
     )
 
 
-DEFAULT_IMAGE_PROMPT = """TYPEFACE LOCK — every letter, digit and accent below is drawn from the second image, never from your own font.
+DEFAULT_IMAGE_PROMPT_HEADER = (
+    "Edit the reference image: translate every text on it into {{targetLang}}.\n\n"
+)
 
-One shape rule that matters most: every stroke ends in a flat cut parallel to the baseline — horizontal, never slanted, never rounded off.
+DEFAULT_IMAGE_PROMPT = """Everything except the glyphs themselves must stay EXACTLY as it is — no redraw, no relight, no recolor, no reframe, nothing added and nothing removed anywhere in the image. The ONE exception is the panel or plate directly behind a listed text: it may grow wider or taller to hold a longer translation, but it must never cover a person or the product, must never touch or overlap any OTHER line of text, and must never change its color or corner style. If a longer translation would run into a neighbouring line, tighten the text inside its own panel instead of expanding into it. Any panel or caption that sits flush against an image edge must stay flush — keep the same edge distance as the reference, never add a margin or gap there.
 
-Edit the first image: replace each text below with the new wording, keeping its anchor position and colour unchanged. Ignore the second image's layout, its background and its word order.
-{rows}
+TYPOGRAPHY — this is the most important constraint, and it is a reading task, not a design choice. Re-render each text with the SAME typeface as the original, not just a similar one.
+Diagnose the reference before drawing any letter. Look only at the large display text and answer two questions about it:
+- The lowercase "a": is it SINGLE-STOREY (one round bowl with one straight stem on the right, no hook above) or DOUBLE-STOREY (a bowl under a curved arch with a hook on top)?
+- The capital "C": is it a continuous ROUND ARC whose two ends curl toward each other leaving a small opening, or does its left side run as a FLAT VERTICAL EDGE leaving a wide opening?
+Those two answers always agree and they name the face. Single-storey a + round-arc C = geometric sans. Double-storey a + flat-edged C = neo-grotesque. The "o" confirms it: near-perfect circle in the geometric case, a slightly narrow oval in the grotesque case. Read the reference and reproduce the same answer — never the one you would pick by habit.
+The most common failure of this task is that the layout comes out perfect while the face is silently swapped: a geometric original is re-drawn as a neo-grotesque, because neo-grotesque is the default an image model reaches for. Inter / Roboto / Helvetica / Arial letterforms are exactly what to avoid unless the original is already one of them.
+Then hold these per block:
+- Keep the SAME weight: a bold line stays equally bold, a regular line stays regular. Never thin a bold line, never bolden a regular one.
+- Keep the SAME letter shapes: same x-height, same stroke contrast, same character width, same tracking. Never switch to a condensed or extended width, never italicise and never slant the type. Digits keep the same width and the same numerals.
+- Do NOT restyle the text: no outlines, no shadows, no gradients, no glow, no new colors, no caps/lowercase change.
 
-Hard rules — these override everything else:
-- [align:x]: every line of that block uses it — left lines share one left edge, centred lines share one centre, right lines share one right edge. Never indent, centre or shift a later line on its own.
-- [size:x%]: the font size as a percentage of the image height. Fixed — never round it, never change it to make a longer text fit.
-- [bold]: keep a heavy stroke heavy, and keep regular text regular.
-- Keep the line breaks exactly as written: each "\\n" is one printed line break. Never hyphenate, never cut or hide a word, never split a number from its unit or a word from its punctuation.
-- Never squeeze, condense, stretch, squash or slant the letters.
-- If a line is wider than before, let it run into the free space beside it — never over a person, the product or another text. If there is none but there is room below, wrap whole words onto one more line.
-- Keep the colours of the first image exactly: a white line stays white, an orange run stays orange together with its punctuation.
-- Do not add, remove or restyle anything: no outlines, no shadows, no glow, no gradient.
+COLOR — keep the exact color of every text, sampled from the original pixels:
+- Use the color named for that block and keep it identical to what the original shows: never shift its hue, saturation or brightness, never add a gradient.
+- Punctuation attached to a colored token (the "*" right after "40%") keeps that token's color: never split a colored token and its punctuation into two colors.
+- NEVER repaint, recolor or invert any text, and never turn a colored text white or a white text colored.
 
-Everything else in the first image stays exactly as it is — including the logos, model numbers and watermarks on the product.
+LAYOUT — each line is [alignment] [color] [bold] [lines:N] [box:x,y,w,h] [panel:x,y,w,h] [safe:left/right] [group:gN] "original" -> "replacement". All numbers are percentages of the image width/height. [lines:N] is the maximum number of printed lines this text may occupy — never exceed it; use fewer only when the text genuinely fits on fewer lines. [box] is the area the text occupies in the reference, [panel] the panel or plate behind it, and [safe] the empty padding inside that panel. These tags are instructions — never print them in the image. A literal "\\n" marks a line break printed in the image; it must break the line there and must never appear in the image as characters.
+{{rows}}
+FONT SIZE IS FIXED — every text keeps its original font size and weight. Never shrink or enlarge a line to make a longer translation fit.
 
-Last check, before you finish — the typeface must not slip: compare every drawn word with the second image letter by letter, and if any character would not pass as the same font, redraw that word from the second image."""
+WORD AND LETTER SPACING — spacing is natural and uniform from the first character to the last. Never add extra space between words or around numbers, never justify a line, and never keep a translated word in the x-position of the original word: word order may change, so lay the replacement out with even word spacing inside its box. Only the box alignment anchor, the baseline, the font size and the weight stay fixed.
+
+WORD ORDER — render the words of every replacement in the exact order given, left to right. Never move a word, number or symbol to the line start or to another position just because the original line started with it; the quoted replacement is the authoritative text.
+
+SHORT TEXT — a title, spec line or label: keep exactly the printed line breaks and the [lines:N] line count. Never wrap it onto an extra line, never split a number from its unit, and never redistribute its spaces. If it is slightly wider than the original, let it extend into free space around its box without moving its left anchor and without distorting any character.
+
+LONG PARAGRAPH — a legal line or disclaimer: keep the [lines:N] line count, keep the same left inset on every line and keep the [safe] padding empty. Never cut, clip or hide a word. If the panel behind it has free room above, the panel may grow upward by at most one line, but it must never cover another text, a person or the product. Never shrink the font to force it into fewer lines.
+
+OVERFLOW — if a line still does not fit, move whole words to the next line within the allowed [lines:N]; only a long paragraph may use one extra line, and only when its panel has free room. Never shorten or paraphrase the given text, never stretch word gaps, never squeeze characters and never let any word touch or cross the right edge of its box or panel.
+
+Keep the same alignment on every line, the same weight and the same typeface. Copy every replacement EXACTLY as given — never add, drop or paraphrase words. Blocks carrying the same [group:gN] tag form one set and must look identical — same font size, same panel size, same line count, same letterforms; if one of them grows, the whole set grows the same way, and never leave one member looking different from its siblings. Do NOT translate, redraw or remove any text that is not listed above — logos, model numbers, watermarks and legal lines are not text here and must stay exactly as they are.
+
+FINAL SELF-CHECK before you return the image — compare your own output against the reference: if the reference's lowercase "a" has no hook on top and your "a" does, or the reference's "C" is a round arc and yours has a flat vertical left edge, then you have broken the typeface constraint: redraw that text with the reference's letterforms."""
 
 
-def build_image_prompt(rows: str, header_template: str = "") -> str:
-    tpl = _effective_template(header_template, DEFAULT_IMAGE_PROMPT)
-    if "{rows}" not in tpl:
-        tpl = tpl.rstrip() + "\n{rows}"
-    return tpl.format(rows=rows)
+def build_image_prompt(rows: str, header_template: str = "", target_lang: str = "") -> str:
+    custom = (header_template or "").strip()
+    if custom:
+        tpl = custom
+    else:
+        tpl = DEFAULT_IMAGE_PROMPT_HEADER + DEFAULT_IMAGE_PROMPT
+    lang = (target_lang or "").strip() or "target language"
+    out = tpl.replace("{{targetLang}}", lang).replace("{{rows}}", rows)
+    if "{rows}" in out and rows not in out:
+        out = out.format(rows=rows, targetLang=lang)
+    return out

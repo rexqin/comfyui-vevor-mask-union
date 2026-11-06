@@ -79,12 +79,19 @@ except Exception:  # noqa: BLE001
 
 try:
     _generative = _load_sibling("vevor_mask_union_generative_pipeline", "generative_pipeline.py")
-    _GENERATIVE_CLASS_MAPPINGS = _generative.NODE_CLASS_MAPPINGS
-    _GENERATIVE_DISPLAY_MAPPINGS = _generative.NODE_DISPLAY_NAME_MAPPINGS
+    _GENERATIVE_CLASS_MAPPINGS = dict(_generative.NODE_CLASS_MAPPINGS)
+    _GENERATIVE_DISPLAY_MAPPINGS = dict(_generative.NODE_DISPLAY_NAME_MAPPINGS)
 except Exception:  # noqa: BLE001
     traceback.print_exc()
     _GENERATIVE_CLASS_MAPPINGS = {}
     _GENERATIVE_DISPLAY_MAPPINGS = {}
+
+try:
+    _generative_apiyi = _load_sibling("vevor_mask_union_generative_apiyi", "generative_apiyi.py")
+    _GENERATIVE_CLASS_MAPPINGS.update(_generative_apiyi.NODE_CLASS_MAPPINGS)
+    _GENERATIVE_DISPLAY_MAPPINGS.update(_generative_apiyi.NODE_DISPLAY_NAME_MAPPINGS)
+except Exception:  # noqa: BLE001
+    traceback.print_exc()
 
 
 class VevorMaskBatchUnion:
