@@ -35,6 +35,14 @@ class VevorGenerativePromptTemplate:
         return {
             "required": {
                 "prompt_key": (list(PROMPT_KEYS),),
+                "catalog_skeleton": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "placeholder": "catalog 骨架（含 {{占位符}}；工作流生成器写入，无需 Queue 即可阅读）",
+                    },
+                ),
                 "variables_json": (
                     "STRING",
                     {
@@ -49,8 +57,8 @@ class VevorGenerativePromptTemplate:
                     "STRING",
                     {
                         "default": "",
-                        "multiline": True,
-                        "placeholder": "留空=generative_prompt_catalog.json；P2 覆写整段骨架",
+                        "multiline": False,
+                        "placeholder": "P2 覆写（留空=包内 catalog）",
                     },
                 ),
             },
@@ -62,7 +70,14 @@ class VevorGenerativePromptTemplate:
     CATEGORY = "vevor/generative"
     OUTPUT_NODE = True
 
-    def render(self, prompt_key: str, variables_json: str, template_override: str = ""):
+    def render(
+        self,
+        prompt_key: str,
+        catalog_skeleton: str,
+        variables_json: str,
+        template_override: str = "",
+    ):
+        _ = catalog_skeleton  # 仅画布展示；执行仍以 resolve_template + variables 为准
         variables = parse_variables_json(variables_json)
         prompt = render_prompt_from_catalog(
             prompt_key,
@@ -71,6 +86,29 @@ class VevorGenerativePromptTemplate:
         )
         preview = prompt if len(prompt) <= 12000 else prompt[:12000] + "\n…(truncated)"
         return {"ui": {"text": [preview]}, "result": (prompt,)}
+
+
+class VevorGenerativeShowPrompt:
+    """OUTPUT 节点：展示渲染后的 prompt（与 TranslationReport 同 ui.text 机制）。"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"default": "", "forceInput": True}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("prompt",)
+    FUNCTION = "show"
+    CATEGORY = "vevor/generative"
+    OUTPUT_NODE = True
+
+    def show(self, prompt: str):
+        text = str(prompt or "")
+        preview = text if len(text) <= 16000 else text[:16000] + "\n…(truncated)"
+        return {"ui": {"text": [preview]}, "result": (text,)}
 
 
 class VevorGenerativeAnalyzeVars:
@@ -242,6 +280,7 @@ class VevorGenerativeApplyReview:
 
 NODE_CLASS_MAPPINGS = {
     "VevorGenerativePromptTemplate": VevorGenerativePromptTemplate,
+    "VevorGenerativeShowPrompt": VevorGenerativeShowPrompt,
     "VevorGenerativeAnalyzeVars": VevorGenerativeAnalyzeVars,
     "VevorGenerativeSpaceBudget": VevorGenerativeSpaceBudget,
     "VevorGenerativeTranslateVars": VevorGenerativeTranslateVars,
@@ -252,6 +291,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorGenerativePromptTemplate": "Generative · Prompt Template",
+    "VevorGenerativeShowPrompt": "Generative · Show Rendered Prompt",
     "VevorGenerativeAnalyzeVars": "Generative · Analyze Variables",
     "VevorGenerativeSpaceBudget": "Generative · Space Budget",
     "VevorGenerativeTranslateVars": "Generative · Translate Variables",
