@@ -13,18 +13,12 @@ if _HERE not in sys.path:
 from generative_pipeline import (  # noqa: E402
     _blocks_as_list,
     _parse_translation_map,
-    build_analyze_variable_map,
     build_generate_variable_map,
     build_review_variable_map,
     build_space_section,
     build_translate_variable_map,
-    render_prompt_from_catalog,
 )
-from generative_template import (  # noqa: E402
-    PROMPT_KEYS,
-    parse_variables_json,
-    resolve_template,
-)
+from generative_template import parse_variables_json, render_template  # noqa: E402
 
 
 def _vars_to_json(variables: dict) -> str:
@@ -32,22 +26,23 @@ def _vars_to_json(variables: dict) -> str:
 
 
 class VevorGenerativePromptTemplate:
-    """Render catalog ``{{placeholder}}`` prompt; P2 配置用 ``template_override``。"""
+    """用工作流 JSON 中的 ``prompt_skeleton`` 作模板，``variables_json`` 填 ``{{占位符}}``。"""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "prompt_key": (list(PROMPT_KEYS),),
                 "prompt_skeleton": (
                     "STRING",
                     {
                         "default": "",
                         "multiline": True,
                         "dynamicPrompts": False,
-                        "placeholder": "提示词骨架（catalog + 占位符；只读参考，Queue 仍走 variables_json）",
+                        "placeholder": "工作流内配置的 prompt 模板（识图可为全文；翻译等含 {{占位符}}）",
                     },
                 ),
+            },
+            "optional": {
                 "variables_json": (
                     "STRING",
                     {
@@ -55,17 +50,6 @@ class VevorGenerativePromptTemplate:
                         "multiline": True,
                         "dynamicPrompts": False,
                         "forceInput": True,
-                    },
-                ),
-            },
-            "optional": {
-                "template_override": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": False,
-                        "dynamicPrompts": False,
-                        "placeholder": "P2 覆写（留空=包内 catalog）",
                     },
                 ),
             },
@@ -77,21 +61,10 @@ class VevorGenerativePromptTemplate:
     CATEGORY = "vevor/generative"
     OUTPUT_NODE = True
 
-    def render(
-        self,
-        prompt_key: str,
-        prompt_skeleton: str,
-        variables_json: str,
-        template_override: str = "",
-    ):
-        # 画布只读展示；执行仍以 resolve_template + variables 为准
-        _ = prompt_skeleton or resolve_template(prompt_key, "")
-        variables = parse_variables_json(variables_json)
-        prompt = render_prompt_from_catalog(
-            prompt_key,
-            variables,
-            str(template_override or ""),
-        )
+    def render(self, prompt_skeleton: str, variables_json: str = ""):
+        template = str(prompt_skeleton or "").strip()
+        variables = parse_variables_json(variables_json or "{}")
+        prompt = render_template(template, variables)
         preview = prompt if len(prompt) <= 12000 else prompt[:12000] + "\n…(truncated)"
         return {"ui": {"text": [preview]}, "result": (prompt,)}
 
@@ -168,39 +141,6 @@ class VevorGenerativeShowPrompt:
         text = str(prompt or "")
         preview = text if len(text) <= 16000 else text[:16000] + "\n…(truncated)"
         return {"ui": {"text": [preview]}, "result": (text,)}
-
-
-class VevorGenerativeAnalyzeVars:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "schema_template": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": True,
-                        "placeholder": "留空=generative_analyze_prompt.txt",
-                    },
-                ),
-                "user_line": (
-                    "STRING",
-                    {
-                        "default": "识别这张图上所有可见文字块，只输出 JSON 数组。",
-                        "multiline": False,
-                    },
-                ),
-            }
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("variables_json",)
-    FUNCTION = "build"
-    CATEGORY = "vevor/generative"
-
-    def build(self, schema_template: str, user_line: str):
-        vars_map = build_analyze_variable_map(schema_template, user_line)
-        return (_vars_to_json(vars_map),)
 
 
 class VevorGenerativeSpaceBudget:
@@ -341,7 +281,6 @@ NODE_CLASS_MAPPINGS = {
     "VevorGenerativePromptTemplate": VevorGenerativePromptTemplate,
     "VevorGenerativeVariablesJsonPatch": VevorGenerativeVariablesJsonPatch,
     "VevorGenerativeShowPrompt": VevorGenerativeShowPrompt,
-    "VevorGenerativeAnalyzeVars": VevorGenerativeAnalyzeVars,
     "VevorGenerativeSpaceBudget": VevorGenerativeSpaceBudget,
     "VevorGenerativeTranslateVars": VevorGenerativeTranslateVars,
     "VevorGenerativeGenerateVars": VevorGenerativeGenerateVars,
@@ -353,7 +292,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorGenerativePromptTemplate": "Generative · Prompt Template",
     "VevorGenerativeVariablesJsonPatch": "Generative · Variables JSON Patch",
     "VevorGenerativeShowPrompt": "Generative · Show Rendered Prompt",
-    "VevorGenerativeAnalyzeVars": "Generative · Analyze Variables",
     "VevorGenerativeSpaceBudget": "Generative · Space Budget",
     "VevorGenerativeTranslateVars": "Generative · Translate Variables",
     "VevorGenerativeGenerateVars": "Generative · Generate Variables",
