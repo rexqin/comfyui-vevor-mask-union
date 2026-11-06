@@ -45,7 +45,7 @@ class VevorGenerativePromptTemplate:
                         "default": "",
                         "multiline": True,
                         "dynamicPrompts": False,
-                        "placeholder": "提示词骨架（含 {{占位符}}；生成器写入，打开即读）",
+                        "placeholder": "提示词骨架（catalog + 占位符；只读参考，Queue 仍走 variables_json）",
                     },
                 ),
                 "variables_json": (

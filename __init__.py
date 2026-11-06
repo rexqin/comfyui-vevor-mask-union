@@ -164,4 +164,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **_GENERATIVE_DISPLAY_MAPPINGS,
 }
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "VevorMaskBatchUnion"]
+WEB_DIRECTORY = os.path.join(_HERE, "web")
+
+__all__ = [
+    "NODE_CLASS_MAPPINGS",
+    "NODE_DISPLAY_NAME_MAPPINGS",
+    "VevorMaskBatchUnion",
+    "WEB_DIRECTORY",
+]
