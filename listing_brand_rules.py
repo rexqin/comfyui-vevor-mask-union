@@ -34,14 +34,19 @@ LISTING_OUTPAINT_PROMPT_SUFFIX = """\
 """ + LISTING_RULES_MARKER + """
 Brand listing constraints for margin fill:
 - Extend background only; keep existing ad content (product, logo, all original text) fixed in place.
-- Margin bands (especially above the bottom-aligned art) MUST continue the real scene: sky, wall, floor, foliage, or studio backdrop — same perspective, lighting, grain, and colour as in the ad. NEVER leave large flat white, grey, or untextured empty bands.
+- Margin bands (above and on the sides of bottom-aligned art) MUST continue the real scene: sky, wall, floor, foliage, or studio backdrop — same perspective, lighting, grain, and colour as in the ad. NEVER leave large flat white, grey, or untextured empty bands.
+- Spatial lock: tree trunks, rooflines, fence posts, and horizon features at the ad edge must continue at the SAME x-position and scale — do not paint a second tree row, shifted trunks, or a different horizon above the artwork.
+- Match the blur/sharpness and depth of field of the original pixels at the margin boundary; do not add extra haze, bloom, or a softer “dream” sky above the sharp ad.
 - If the letterbox pre-fill is white or a single flat colour, REPLACE those pixels with plausible environment continuation; do not preserve listing white margins as the final result.
 - Do not introduce new text, logos, orange blocks, or decorative frames in filled areas.
 """
 
 LISTING_OUTPAINT_NEGATIVE_EXTRA = (
     "solid white margin, blank white band, flat white fill, empty grey band, "
-    "untiled margin, untextured margin, poster white border, letterbox white bar"
+    "untiled margin, untextured margin, poster white border, letterbox white bar, "
+    "shifted background, misaligned trees, vertical seam, horizontal seam, "
+    "discontinuous roofline, broken corrugation, duplicated trunks, "
+    "perspective warp, offset horizon, tile mismatch, mirror stripe"
 )
 
 LISTING_ERASE_NEGATIVE_EXTRA = (

@@ -1633,11 +1633,9 @@ class VevorRestoreProtected:
 def outpaint_margin_composite(plate_rgb, diffusion_rgb, margin_mask, seam_guard=96, guard_blend=8):
     """Composite diffusion margin fill onto a letterbox plate without seam misalignment.
 
-    API image edits often repaint the margin with scenery that does not line up with
-    pixels at the content edge. ``ImageCompositeMasked`` pastes that full frame with a
-    hard mask, so trunks/sky shift at the seam. A *seam guard* band (``seam_guard`` px
-    above the content) keeps letterbox pixels only; farther margin uses diffusion, with
-    an optional ``guard_blend`` ramp between the two.
+    API edits often shift scenery relative to the ad edge. Dilate the content mask by
+    ``seam_guard`` px on all sides so plate pixels (edge_extend) stay fixed in that
+    collar; only the outer margin uses ``diffusion``. ``guard_blend`` softly ramps alpha.
     """
     guard_blend = max(0, int(guard_blend))
     seam_guard = max(0, int(seam_guard))
@@ -1645,26 +1643,20 @@ def outpaint_margin_composite(plate_rgb, diffusion_rgb, margin_mask, seam_guard=
     if h <= 0 or w <= 0:
         raise ValueError("outpaint_margin_composite: empty mask")
 
-    row_mean = np.mean(margin_mask, axis=1)
-    content_rows = np.where(row_mean < 0.5)[0]
-    content_top = int(content_rows[0]) if content_rows.size else h
+    margin = np.clip(margin_mask, 0.0, 1.0)
+    content_u8 = ((1.0 - margin) > 0.5).astype(np.uint8) * 255
+    if seam_guard > 0:
+        k = 2 * seam_guard + 1
+        content_u8 = np.asarray(
+            Image.fromarray(content_u8).filter(ImageFilter.MaxFilter(k))
+        )
+    protect = content_u8.astype(np.float32) / 255.0
+    alpha = margin * (1.0 - protect)
+    if guard_blend > 0 and np.any(alpha > 0):
+        blurred = Image.fromarray((np.clip(alpha, 0, 1) * 255).astype(np.uint8))
+        blurred = blurred.filter(ImageFilter.GaussianBlur(guard_blend))
+        alpha = np.asarray(blurred).astype(np.float32) / 255.0 * margin
 
-    guard_start = max(0, content_top - seam_guard)
-    ramp_start = max(0, guard_start - guard_blend)
-
-    alpha = np.zeros((h, w), dtype=np.float32)
-    for y in range(h):
-        if y >= content_top:
-            continue
-        if y >= guard_start:
-            continue
-        if guard_blend <= 0 or y < ramp_start:
-            alpha[y, :] = 1.0
-        else:
-            t = (guard_start - y) / guard_blend
-            alpha[y, :] = float(np.clip(t, 0.0, 1.0))
-
-    alpha *= np.clip(margin_mask, 0.0, 1.0)
     alpha3 = alpha[..., np.newaxis]
     return plate_rgb * (1.0 - alpha3) + diffusion_rgb * alpha3
 
@@ -1673,8 +1665,8 @@ class VevorOutpaintMarginComposite:
     """Letterbox + diffusion outpaint with a seam guard against API shift."""
 
     DESCRIPTION = (
-        "Paste diffusion margin over letterbox plate. seam_guard rows above content "
-        "keep the letterbox (edge-aligned); only outer margin uses the API image."
+        "Paste diffusion margin over letterbox plate. seam_guard px around the ad "
+        "(top/left/right) keeps edge_extend plate; only outer margin uses the API image."
     )
 
     @classmethod
