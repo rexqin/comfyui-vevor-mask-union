@@ -1630,6 +1630,93 @@ class VevorRestoreProtected:
         return (torch.from_numpy(out).unsqueeze(0),)
 
 
+def outpaint_margin_composite(plate_rgb, diffusion_rgb, margin_mask, seam_guard=96, guard_blend=8):
+    """Composite diffusion margin fill onto a letterbox plate without seam misalignment.
+
+    API image edits often repaint the margin with scenery that does not line up with
+    pixels at the content edge. ``ImageCompositeMasked`` pastes that full frame with a
+    hard mask, so trunks/sky shift at the seam. A *seam guard* band (``seam_guard`` px
+    above the content) keeps letterbox pixels only; farther margin uses diffusion, with
+    an optional ``guard_blend`` ramp between the two.
+    """
+    guard_blend = max(0, int(guard_blend))
+    seam_guard = max(0, int(seam_guard))
+    h, w = margin_mask.shape
+    if h <= 0 or w <= 0:
+        raise ValueError("outpaint_margin_composite: empty mask")
+
+    row_mean = np.mean(margin_mask, axis=1)
+    content_rows = np.where(row_mean < 0.5)[0]
+    content_top = int(content_rows[0]) if content_rows.size else h
+
+    guard_start = max(0, content_top - seam_guard)
+    ramp_start = max(0, guard_start - guard_blend)
+
+    alpha = np.zeros((h, w), dtype=np.float32)
+    for y in range(h):
+        if y >= content_top:
+            continue
+        if y >= guard_start:
+            continue
+        if guard_blend <= 0 or y < ramp_start:
+            alpha[y, :] = 1.0
+        else:
+            t = (guard_start - y) / guard_blend
+            alpha[y, :] = float(np.clip(t, 0.0, 1.0))
+
+    alpha *= np.clip(margin_mask, 0.0, 1.0)
+    alpha3 = alpha[..., np.newaxis]
+    return plate_rgb * (1.0 - alpha3) + diffusion_rgb * alpha3
+
+
+class VevorOutpaintMarginComposite:
+    """Letterbox + diffusion outpaint with a seam guard against API shift."""
+
+    DESCRIPTION = (
+        "Paste diffusion margin over letterbox plate. seam_guard rows above content "
+        "keep the letterbox (edge-aligned); only outer margin uses the API image."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "plate": ("IMAGE",),
+                "diffusion": ("IMAGE",),
+                "margin_mask": ("MASK",),
+                "seam_guard": ("INT", {"default": 96, "min": 0, "max": 512, "step": 4}),
+                "guard_blend": ("INT", {"default": 8, "min": 0, "max": 128, "step": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "composite"
+    CATEGORY = "vevor/image"
+
+    def composite(self, plate, diffusion, margin_mask, seam_guard=96, guard_blend=8):
+        if torch is None:  # pragma: no cover
+            raise RuntimeError("torch is required for VevorOutpaintMarginComposite")
+        n = plate.shape[0]
+        if diffusion.shape[0] != n or margin_mask.shape[0] != n:
+            raise ValueError("plate, diffusion, and margin_mask batch sizes must match")
+
+        frames = []
+        for i in range(n):
+            p = np.clip(plate[i].cpu().numpy(), 0.0, 1.0).astype(np.float32)
+            d = np.clip(diffusion[i].cpu().numpy(), 0.0, 1.0).astype(np.float32)
+            if d.shape[:2] != p.shape[:2]:
+                d_pil = Image.fromarray((d * 255).astype(np.uint8))
+                d_pil = d_pil.resize((p.shape[1], p.shape[0]), Image.LANCZOS)
+                d = np.asarray(d_pil).astype(np.float32) / 255.0
+            m = margin_mask[i].cpu().numpy().astype(np.float32)
+            if m.ndim == 3:
+                m = m[..., 0]
+            frames.append(outpaint_margin_composite(p, d, m, seam_guard, guard_blend))
+
+        return (torch.from_numpy(np.stack(frames).astype(np.float32)),)
+
+
 NODE_CLASS_MAPPINGS = {
     "VevorTextRender": VevorTextRender,
     "VevorLetterboxToTarget": VevorLetterboxToTarget,
@@ -1639,6 +1726,7 @@ NODE_CLASS_MAPPINGS = {
     "VevorSaveNamed": VevorSaveNamed,
     "VevorOcrGuard": VevorOcrGuard,
     "VevorRestoreProtected": VevorRestoreProtected,
+    "VevorOutpaintMarginComposite": VevorOutpaintMarginComposite,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1650,4 +1738,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VevorSaveNamed": "Save Named (connected prefix)",
     "VevorOcrGuard": "OCR Guard (brands / specs / noise)",
     "VevorRestoreProtected": "Restore Protected (brand pixels)",
+    "VevorOutpaintMarginComposite": "Outpaint margin composite (seam guard)",
 }
