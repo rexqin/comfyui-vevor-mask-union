@@ -607,21 +607,20 @@ def _feather_margin_mask(margin_mask, feather):
 
     ``margin_mask`` is 0.0 on scaled original content and 1.0 on synthetic
     border pixels. A hard 0→1 step makes ``ImageCompositeMasked`` paste the
-    diffusion outpaint onto the original with a visible seam. A Gaussian blur
-    turns that step into a smooth ramp centred on the content edge, so the two
-    sources blend across ~2*feather px and the paste line disappears.
+    diffusion outpaint onto the original with a visible seam.
 
-    The ramp spans both sides of the edge: the outermost ~feather px of the
-    original content get a partial mix with the outpaint (harmless when the
-    diffusion keeps the art unchanged), and the innermost ~feather px of the
-    margin mix with the prefill (white for ``fill_mode=solid``). To avoid a
-    whitish halo in that margin band, prefer ``edge_extend``/``reflect`` when
-    the diffusion can be trusted to overwrite the whole margin.
+    Sequence: (1) MinFilter widens the content (0) region so the blend ramp
+    sits mostly inside the margin, protecting ad pixels from a misaligned API
+  plate; (2) Gaussian blur softens the step. With ``fill_mode=solid`` the
+  margin prefill is white — use ``edge_extend`` so the transition is not a
+  white halo.
     """
     feather = int(round(feather))
     if feather <= 0:
         return margin_mask
     mask = Image.fromarray((np.clip(margin_mask, 0.0, 1.0) * 255.0).astype(np.uint8))
+    inset = max(1, min(feather, 64))
+    mask = mask.filter(ImageFilter.MinFilter(2 * inset + 1))
     mask = mask.filter(ImageFilter.GaussianBlur(feather))
     return np.asarray(mask).astype(np.float32) / 255.0
 
