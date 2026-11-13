@@ -34,7 +34,7 @@ import numpy as np
 _PACK_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PACK_DIR not in sys.path:
     sys.path.insert(0, _PACK_DIR)
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 try:  # ComfyUI always provides torch; absent only when running unit tests.
     import torch
@@ -602,6 +602,30 @@ def _align_inset(inner: int, outer: int, align: str) -> int:
     return max(0, slack // 2)
 
 
+def _feather_margin_mask(margin_mask, feather):
+    """Feather the content/margin boundary of a 0/1 margin mask.
+
+    ``margin_mask`` is 0.0 on scaled original content and 1.0 on synthetic
+    border pixels. A hard 0→1 step makes ``ImageCompositeMasked`` paste the
+    diffusion outpaint onto the original with a visible seam. A Gaussian blur
+    turns that step into a smooth ramp centred on the content edge, so the two
+    sources blend across ~2*feather px and the paste line disappears.
+
+    The ramp spans both sides of the edge: the outermost ~feather px of the
+    original content get a partial mix with the outpaint (harmless when the
+    diffusion keeps the art unchanged), and the innermost ~feather px of the
+    margin mix with the prefill (white for ``fill_mode=solid``). To avoid a
+    whitish halo in that margin band, prefer ``edge_extend``/``reflect`` when
+    the diffusion can be trusted to overwrite the whole margin.
+    """
+    feather = int(round(feather))
+    if feather <= 0:
+        return margin_mask
+    mask = Image.fromarray((np.clip(margin_mask, 0.0, 1.0) * 255.0).astype(np.uint8))
+    mask = mask.filter(ImageFilter.GaussianBlur(feather))
+    return np.asarray(mask).astype(np.float32) / 255.0
+
+
 def letterbox_to_target(
     array,
     target_w,
@@ -610,6 +634,7 @@ def letterbox_to_target(
     fill_color,
     valign="center",
     halign="center",
+    feather=0,
 ):
     """Fit inside target_w×target_h, place content, return (rgb float32, margin mask float32).
 
@@ -660,6 +685,7 @@ def letterbox_to_target(
         canvas = Image.fromarray(padded)
 
     rgb = np.asarray(canvas).astype(np.float32) / 255.0
+    margin_mask = _feather_margin_mask(margin_mask, feather)
     return rgb, margin_mask
 
 
@@ -686,6 +712,7 @@ class VevorLetterboxToTarget:
                 "fill_color": ("STRING", {"default": "#ffffff"}),
                 "valign": (["center", "top", "bottom"], {"default": "bottom"}),
                 "halign": (["center", "left", "right"], {"default": "center"}),
+                "feather": ("INT", {"default": 0, "min": 0, "max": 256, "step": 1}),
             }
         }
 
@@ -694,13 +721,13 @@ class VevorLetterboxToTarget:
     FUNCTION = "letterbox"
     CATEGORY = "vevor/image"
 
-    def letterbox(self, image, target_w, target_h, fill_mode, fill_color, valign, halign):
+    def letterbox(self, image, target_w, target_h, fill_mode, fill_color, valign, halign, feather=0):
         frames = []
         masks = []
         for frame in image:
             array = np.clip(255.0 * frame.cpu().numpy(), 0, 255).astype(np.uint8)
             rgb, margin = letterbox_to_target(
-                array, target_w, target_h, fill_mode, fill_color, valign, halign
+                array, target_w, target_h, fill_mode, fill_color, valign, halign, feather
             )
             frames.append(rgb)
             masks.append(margin)

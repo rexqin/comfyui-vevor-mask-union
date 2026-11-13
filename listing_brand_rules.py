@@ -34,9 +34,15 @@ LISTING_OUTPAINT_PROMPT_SUFFIX = """\
 """ + LISTING_RULES_MARKER + """
 Brand listing constraints for margin fill:
 - Extend background only; keep existing ad content (product, logo, all original text) fixed in place.
-- New margin pixels must match scene colour, lighting, and texture; prefer clean white/neutral margins when the original uses listing white margins.
+- Margin bands (especially above the bottom-aligned art) MUST continue the real scene: sky, wall, floor, foliage, or studio backdrop — same perspective, lighting, grain, and colour as in the ad. NEVER leave large flat white, grey, or untextured empty bands.
+- If the letterbox pre-fill is white or a single flat colour, REPLACE those pixels with plausible environment continuation; do not preserve listing white margins as the final result.
 - Do not introduce new text, logos, orange blocks, or decorative frames in filled areas.
 """
+
+LISTING_OUTPAINT_NEGATIVE_EXTRA = (
+    "solid white margin, blank white band, flat white fill, empty grey band, "
+    "untiled margin, untextured margin, poster white border, letterbox white bar"
+)
 
 LISTING_ERASE_NEGATIVE_EXTRA = (
     "removed logo, removed icons, removed dimension lines, recolored brand orange, "
